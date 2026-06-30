@@ -48,6 +48,7 @@ class DashboardLoader:
 
         assets = loader.all_assets()
 
+       
         # ------------------------
         # Country
         # ------------------------
@@ -57,12 +58,25 @@ class DashboardLoader:
             assets = [
                 a
                 for a in assets
-                if getattr(a, "country", "") == filters["country"]
+                if getattr(a, "country", "").strip().lower()
+                == filters["country"].strip().lower()
             ]
 
-        # ------------------------
-        # Sector
-        # ------------------------
+            # ------------------------
+            # Special Case:
+            # Global Macro should exclude Indian Indices
+            # ------------------------
+
+            if (
+                filters["country"] == "Global"
+                and filters["sector"] == "All"
+            ):
+
+                assets = [
+                    a
+                    for a in assets
+                    if a.category != "Indian Indices"
+                ]
 
         if filters["sector"] != "All":
 

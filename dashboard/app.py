@@ -57,51 +57,88 @@ st.divider()
 
 st.sidebar.header("Filters")
 
-country = st.sidebar.selectbox(
+market = st.sidebar.selectbox(
     "Market",
     [
         "All",
         "India",
+        "Indian Indices",
         "USA",
         "Crypto",
-        "Global",
+        "Global Macro",
     ],
 )
 
-if country == "Global":
+# --------------------------------------------------
+# Category
+# --------------------------------------------------
 
-    sectors = [
-        "All",
-        "Indian Indices",
-        "US Indices",
-        "European Indices",
-        "Asian Indices",
-        "Currencies",
-        "Commodities",
-        "Bonds",
-    ]
+if market == "India":
 
-elif country == "India":
-
-    sectors = ["All"] + sorted(
-        meta[meta["country"] == "India"]["sector"].unique().tolist()
+    sectors = (
+        ["All"]
+        + sorted(
+            meta[
+                meta["country"].str.lower() == "india"
+            ]["sector"]
+            .dropna()
+            .unique()
+            .tolist()
+        )
     )
 
-elif country == "USA":
+elif market == "USA":
 
-    sectors = ["All"] + sorted(
-        meta[meta["country"] == "USA"]["sector"].unique().tolist()
+    sectors = (
+        ["All"]
+        + sorted(
+            meta[
+                meta["country"].str.lower() == "usa"
+            ]["sector"]
+            .dropna()
+            .unique()
+            .tolist()
+        )
     )
 
-elif country == "Crypto":
+elif market == "Crypto":
 
-    sectors = ["All"] + sorted(
-        meta[meta["country"] == "Crypto"]["sector"].unique().tolist()
+    sectors = (
+        ["All"]
+        + sorted(
+            meta[
+                meta["country"].str.lower() == "crypto"
+            ]["sector"]
+            .dropna()
+            .unique()
+            .tolist()
+        )
     )
+
+elif market == "Indian Indices":
+
+    sectors = ["Indian Indices"]
+
+elif market == "Global Macro":
+
+    sectors = (
+        meta[
+            (meta["country"].str.lower() == "global")
+            & (meta["sector"] != "Indian Indices")
+        ]["sector"]
+        .dropna()
+        .unique()
+        .tolist()
+    )
+
+    sectors = ["All"] + sorted(sectors)
 
 else:
 
-    sectors = ["All"] + sorted(meta["sector"].unique().tolist())
+    sectors = (
+        ["All"]
+        + sorted(meta["sector"].dropna().unique().tolist())
+    )
 
 sector = st.sidebar.selectbox(
     "Category",
@@ -151,6 +188,15 @@ if "market" not in st.session_state:
 if load:
 
     with st.spinner("Loading selected assets..."):
+
+        country = market
+
+        if market == "Indian Indices":
+            country = "Global"
+            sector = "Indian Indices"
+
+        elif market == "Global Macro":
+            country = "Global"
 
         df, success, failed = DashboardLoader.load(
             {
