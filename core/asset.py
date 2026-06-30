@@ -20,6 +20,7 @@ class Asset:
     name: str
     symbol: str
     category: str
+    country: str = ""
 
     exchange: str = ""
     currency: str = ""

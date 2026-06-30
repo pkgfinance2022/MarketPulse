@@ -9,18 +9,13 @@ from datetime import datetime
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-import pandas as pd
 import streamlit as st
 
-from core.loader import AssetLoader
-from services.market_service import MarketService
-from services.summary_service import SummaryService
-from services.indicator_service import IndicatorService
+from dashboard.services.dashboard_loader import DashboardLoader
 
-
-# ----------------------------------------------------
+# --------------------------------------------------
 # Page
-# ----------------------------------------------------
+# --------------------------------------------------
 
 st.set_page_config(
     page_title="Market Pulse",
@@ -28,78 +23,20 @@ st.set_page_config(
     layout="wide",
 )
 
-# ----------------------------------------------------
-# Load Data
-# ----------------------------------------------------
+# --------------------------------------------------
+# Metadata
+# --------------------------------------------------
 
-@st.cache_data(ttl=300)
-def load_market():
-
-    loader = AssetLoader()
-    assets = loader.all_assets()
-
-    service = MarketService()
-    repo = service.load_market(assets)
-
-    rows = []
-
-    for asset in repo.all():
-
-        SummaryService.build(asset)
-        IndicatorService.build(asset)
-
-        # ---------- Trend Icons ----------
-
-        def trend_icon(trend):
-
-            if trend == "Bullish":
-                return "🟢 Bullish"
-
-            if trend == "Bearish":
-                return "🔴 Bearish"
-
-            return "🟡 Neutral"
-
-        # ---------- RSI ----------
-
-        def rsi_color(rsi):
-
-            if rsi >= 70:
-                return f"🔴 {rsi:.1f}"
-
-            elif rsi >= 55:
-                return f"🟢 {rsi:.1f}"
-
-            elif rsi >= 45:
-                return f"🟡 {rsi:.1f}"
-
-            else:
-                return f"🔵 {rsi:.1f}"
-
-        rows.append(
-            {
-                "Category": asset.category.title(),
-                "Asset": asset.name,
-                "Price": round(asset.summary.price, 2),
-
-                "15m RSI": rsi_color(asset.indicators.m15.rsi14),
-                "1H RSI": rsi_color(asset.indicators.h1.rsi14),
-                "1D RSI": rsi_color(asset.indicators.d1.rsi14),
-
-                "15m Trend": trend_icon(asset.indicators.m15.trend),
-                "1H Trend": trend_icon(asset.indicators.h1.trend),
-                "1D Trend": trend_icon(asset.indicators.d1.trend),
-            }
-        )
-
-    return pd.DataFrame(rows)
+meta = DashboardLoader.metadata()
 
 
-df = load_market()
+countries = ["All"] + sorted(meta["country"].dropna().unique().tolist())
 
-# ----------------------------------------------------
+sectors = ["All"] + sorted(meta["sector"].dropna().unique().tolist())
+
+# --------------------------------------------------
 # Header
-# ----------------------------------------------------
+# --------------------------------------------------
 
 left, right = st.columns([4, 1])
 
@@ -108,92 +45,170 @@ with left:
 
 with right:
     st.metric(
-        "Last Refresh",
+        "Time",
         datetime.now().strftime("%H:%M:%S"),
     )
 
 st.divider()
 
-# ----------------------------------------------------
+# --------------------------------------------------
 # Sidebar
-# ----------------------------------------------------
+# --------------------------------------------------
 
-st.sidebar.title("Market Pulse")
+st.sidebar.header("Filters")
 
-category = st.sidebar.selectbox(
-    "Category",
+country = st.sidebar.selectbox(
+    "Market",
     [
         "All",
-        "Indices",
-        "Commodities",
+        "India",
+        "USA",
         "Crypto",
-        "US",
+        "Global",
     ],
 )
 
-search = st.sidebar.text_input(
-    "Search Asset",
+if country == "Global":
+
+    sectors = [
+        "All",
+        "Indian Indices",
+        "US Indices",
+        "European Indices",
+        "Asian Indices",
+        "Currencies",
+        "Commodities",
+        "Bonds",
+    ]
+
+elif country == "India":
+
+    sectors = ["All"] + sorted(
+        meta[meta["country"] == "India"]["sector"].unique().tolist()
+    )
+
+elif country == "USA":
+
+    sectors = ["All"] + sorted(
+        meta[meta["country"] == "USA"]["sector"].unique().tolist()
+    )
+
+elif country == "Crypto":
+
+    sectors = ["All"] + sorted(
+        meta[meta["country"] == "Crypto"]["sector"].unique().tolist()
+    )
+
+else:
+
+    sectors = ["All"] + sorted(meta["sector"].unique().tolist())
+
+sector = st.sidebar.selectbox(
+    "Category",
+    sectors,
 )
 
-# ----------------------------------------------------
-# Filtering
-# ----------------------------------------------------
+search = st.sidebar.text_input(
+    "Search",
+)
 
-filtered = df.copy()
+st.sidebar.divider()
 
-if category != "All":
+assets_found = len(meta)
 
-    filtered = filtered[
-        filtered["Category"].str.lower() == category.lower()
-    ]
+st.sidebar.metric(
+    "Database Assets",
+    assets_found,
+)
 
-if search:
+load = st.sidebar.button(
+    "🚀 Load Selected",
+    width="stretch",
+)
 
-    filtered = filtered[
-        filtered["Asset"].str.contains(
-            search,
-            case=False,
+refresh = st.sidebar.button(
+    "🔄 Clear Cache",
+    width="stretch",
+)
+
+if refresh:
+
+    st.cache_data.clear()
+
+    st.success("Cache Cleared")
+
+# --------------------------------------------------
+# Session
+# --------------------------------------------------
+
+if "market" not in st.session_state:
+    st.session_state.market = None
+
+# --------------------------------------------------
+# Load
+# --------------------------------------------------
+
+if load:
+
+    with st.spinner("Loading selected assets..."):
+
+        df, success, failed = DashboardLoader.load(
+            {
+                "country": country,
+                "sector": sector,
+                "search": search,
+            }
         )
-    ]
 
-# ----------------------------------------------------
-# Cards
-# ----------------------------------------------------
+    st.session_state.market = {
+        "df": df,
+        "success": success,
+        "failed": failed,
+    }
 
-c1, c2, c3, c4 = st.columns(4)
+# --------------------------------------------------
+# Show
+# --------------------------------------------------
 
-with c1:
-    indices = len(df[df["Category"] == "Indices"])
-    us = len(df[df["Category"] == "US"])
-    crypto = len(df[df["Category"] == "Crypto"])
-    commodities = len(df[df["Category"] == "Commodities"])
+market = st.session_state.market
 
-    c1, c2, c3, c4 = st.columns(4)
+if market is None:
 
-    c1.metric("🇮🇳 Indices", indices)
-    c2.metric("🇺🇸 US", us)
-    c3.metric("₿ Crypto", crypto)
-    c4.metric("🥇 Commodities", commodities)
+    st.info(
+        "Choose filters and click **Load Selected**."
+    )
 
-with c2:
-    st.metric("🇺🇸 US", "4 Assets")
+    st.stop()
 
-with c3:
-    st.metric("₿ Crypto", "3 Assets")
+# --------------------------------------------------
+# Metrics
+# --------------------------------------------------
 
-with c4:
-    st.metric("🥇 Commodities", "3 Assets")
+m1, m2, m3 = st.columns(3)
+
+m1.metric(
+    "Loaded",
+    market["success"],
+)
+
+m2.metric(
+    "Failed",
+    market["failed"],
+)
+
+m3.metric(
+    "Displayed",
+    len(market["df"]),
+)
 
 st.divider()
 
-# ----------------------------------------------------
+# --------------------------------------------------
 # Table
-# ----------------------------------------------------
+# --------------------------------------------------
 
 st.dataframe(
-    filtered,
-    use_container_width=True,
+    market["df"],
+    width="stretch",
     hide_index=True,
 )
-
-st.caption(f"{len(filtered)} Assets")

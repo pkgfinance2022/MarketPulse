@@ -1,50 +1,57 @@
 """
-Loads application assets from assets.yaml
+Asset Loader
+
+Loads all assets from the database folder.
 """
 
 from pathlib import Path
-import yaml
+
+import pandas as pd
+
+from core.asset import Asset
 
 
 class AssetLoader:
-    """Loads all assets defined in assets.yaml."""
 
-    def __init__(self, filename: str = "assets.yaml"):
-        self.filename = Path(filename)
+    DATABASE = Path("database")
 
-    def load(self) -> dict:
+    FILES = [
+        "india_master.csv",
+        "us_master.csv",
+        "crypto_master.csv",
+        "macro_master.csv",
+    ]
 
-        if not self.filename.exists():
-            raise FileNotFoundError(
-                f"File not found: {self.filename}"
-            )
-
-        with open(
-            self.filename,
-            "r",
-            encoding="utf-8",
-        ) as file:
-
-            return yaml.safe_load(file)
-
-    def all_assets(self) -> list[dict]:
-
-        data = self.load()
+    def all_assets(self):
 
         assets = []
 
-        for category, values in data.items():
+        for filename in self.FILES:
 
-            for item in values:
+            path = self.DATABASE / filename
+
+            if not path.exists():
+                print(f"Missing: {path}")
+                continue
+
+            df = pd.read_csv(path)
+
+            for _, row in df.iterrows():
+
+                active = str(row.get("Active", "TRUE")).upper()
+
+                if active != "TRUE":
+                    continue
 
                 assets.append(
-                    {
-                        "name": item["name"],
-                        "symbol": item["symbol"],
-                        "category": category,
-                        "exchange": item.get("exchange", ""),
-                        "currency": item.get("currency", ""),
-                    }
+                    Asset(
+                        name=row["Name"],
+                        symbol=row["Symbol"],
+                        category=row["Sector"],
+                        exchange=row.get("Exchange", ""),
+                        currency="",
+                        country=row["Country"],
+                    )
                 )
 
         return assets

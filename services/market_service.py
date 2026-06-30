@@ -1,10 +1,9 @@
 """
 Market Service
 
-Downloads market data for all configured assets.
+Downloads market data and builds the repository.
 """
 
-from core.asset import Asset
 from core.repository import AssetRepository
 from providers.yahoo import YahooProvider
 
@@ -15,7 +14,7 @@ class MarketService:
 
         self.provider = YahooProvider()
 
-    def load_market(self, assets: list[dict]) -> AssetRepository:
+    def load_market(self, assets):
 
         repository = AssetRepository()
 
@@ -25,39 +24,34 @@ class MarketService:
         print("Downloading market data...")
         print()
 
-        for index, info in enumerate(assets, start=1):
+        for index, asset in enumerate(assets, start=1):
 
-            print(f"[{index}/{total}] {info['symbol']}")
+            print(f"[{index}/{total}] {asset.symbol}")
 
-            asset = Asset(
-                name=info["name"],
-                symbol=info["symbol"],
-                category=info["category"],
-                exchange=info.get("exchange", ""),
-                currency=info.get("currency", ""),
-            )
+            try:
 
-            # 15 Minute
-            asset.data_15m = self.provider.download(
-                symbol=asset.symbol,
-                period="60d",
-                interval="15m",
-            )
+                asset.data_15m = self.provider.history(
+                    asset.symbol,
+                    interval="15m",
+                    period="5d",
+                )
 
-            # 1 Hour
-            asset.data_1h = self.provider.download(
-                symbol=asset.symbol,
-                period="730d",
-                interval="1h",
-            )
+                asset.data_1h = self.provider.history(
+                    asset.symbol,
+                    interval="1h",
+                    period="3mo",
+                )
 
-            # Daily
-            asset.data_1d = self.provider.download(
-                symbol=asset.symbol,
-                period="5y",
-                interval="1d",
-            )
+                asset.data_1d = self.provider.history(
+                    asset.symbol,
+                    interval="1d",
+                    period="2y",
+                )
 
-            repository.add(asset)
+                repository.add(asset)
+
+            except Exception as ex:
+
+                print(f"Failed : {asset.symbol} : {ex}")
 
         return repository

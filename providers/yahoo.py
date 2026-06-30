@@ -1,40 +1,42 @@
 """
-Yahoo Finance Provider.
-
-Responsible ONLY for downloading data.
+Yahoo Finance Provider
 """
-
-from __future__ import annotations
 
 import pandas as pd
 import yfinance as yf
 
-from providers.base import BaseProvider
 
+class YahooProvider:
 
-class YahooProvider(BaseProvider):
-
-    def download(
+    def history(
         self,
-        symbol: str,
-        period: str,
-        interval: str,
-    ) -> pd.DataFrame:
+        symbol,
+        interval="1d",
+        period="1y",
+    ):
 
         df = yf.download(
             symbol,
-            period=period,
             interval=interval,
+            period=period,
             auto_adjust=True,
             progress=False,
-            threads=False,
+            group_by="column",
+            multi_level_index=False,
         )
 
         if df.empty:
             return df
 
-        # Flatten MultiIndex columns if present
+        # Flatten MultiIndex columns if yfinance returns them
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
-        return df
+        # Keep only the columns we use
+        expected = ["Open", "High", "Low", "Close", "Volume"]
+
+        for col in expected:
+            if col not in df.columns:
+                df[col] = None
+
+        return df[expected]
