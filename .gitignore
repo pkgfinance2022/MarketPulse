@@ -1,0 +1,44 @@
+# Python
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+
+.venv/
+venv/
+
+# VS Code
+
+.vscode/
+
+# Streamlit cache
+
+.streamlit/
+
+# Python cache
+
+.pytest_cache/
+
+# OS
+
+.DS_Store
+Thumbs.db
+
+# Logs
+
+*.log
+
+# Temporary
+
+*.tmp
+
+# Build
+
+dist/
+build/
+
+# Environment
+
+.env
