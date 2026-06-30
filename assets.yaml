@@ -1,0 +1,52 @@
+indices:
+
+  - name: NIFTY 50
+    symbol: ^NSEI
+
+  - name: BANK NIFTY
+    symbol: ^NSEBANK
+
+  - name: S&P 500
+    symbol: ^GSPC
+
+  - name: NASDAQ
+    symbol: ^IXIC
+
+  - name: Dow Jones
+    symbol: ^DJI
+
+commodities:
+
+  - name: Gold
+    symbol: GC=F
+
+  - name: Silver
+    symbol: SI=F
+
+  - name: Copper
+    symbol: HG=F
+
+crypto:
+
+  - name: Bitcoin
+    symbol: BTC-USD
+
+  - name: Ethereum
+    symbol: ETH-USD
+
+  - name: Solana
+    symbol: SOL-USD
+
+us:
+
+  - name: NVIDIA
+    symbol: NVDA
+
+  - name: Microsoft
+    symbol: MSFT
+
+  - name: Apple
+    symbol: AAPL
+
+  - name: Amazon
+    symbol: AMZN
