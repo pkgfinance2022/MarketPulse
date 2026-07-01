@@ -1,274 +1,62 @@
 """
-Market Pulse Dashboard
+MarketPulse v2 dashboard shell.
+
+The app coordinates services and widgets. Analysis and business rules live in
+the engines and services, while widgets only render already-prepared data.
 """
 
 import sys
 from pathlib import Path
-from datetime import datetime
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import streamlit as st
 
+from dashboard.services.chart_service import ChartService
 from dashboard.services.dashboard_loader import DashboardLoader
+from dashboard.services.dashboard_stats import DashboardStats
+from dashboard.widgets.charts import Charts
+from dashboard.widgets.header import Header
+from dashboard.widgets.market_status import MarketStatus
+from dashboard.widgets.metrics import Metrics
+from dashboard.widgets.scanner import Scanner
+from dashboard.widgets.sidebar import Sidebar
+from dashboard.widgets.stock_details import StockDetails
+from dashboard.widgets.top_opportunities import TopOpportunities
 
-from services.market_clock import MarketClock
-
-
-# --------------------------------------------------
-# Page
-# --------------------------------------------------
 
 st.set_page_config(
-    page_title="Market Pulse",
-    page_icon="📈",
+    page_title="MarketPulse",
+    page_icon="MP",
     layout="wide",
 )
 
-# --------------------------------------------------
-# Metadata
-# --------------------------------------------------
 
-meta = DashboardLoader.metadata()
+def init_state():
 
+    defaults = {
+        "market": None,
+        "selected_ticker": None,
+        "chart": None,
+    }
 
-countries = ["All"] + sorted(meta["country"].dropna().unique().tolist())
-
-sectors = ["All"] + sorted(meta["sector"].dropna().unique().tolist())
-
-# --------------------------------------------------
-# Header
-# --------------------------------------------------
-
-left, right = st.columns([4, 1])
-
-with left:
-    st.title("📈 Market Pulse")
-# --------------------------------------------------
-# Market Status
-# --------------------------------------------------
-
-india = MarketClock.status("India")
-usa = MarketClock.status("USA")
-europe = MarketClock.status("Europe")
-forex = MarketClock.status("Forex")
-crypto = MarketClock.status("Crypto")
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 
-def status_card(col, flag, title, data):
+def load_market(filters):
 
-    if data["status"] == "OPEN":
-        icon = "🟢"
-    else:
-        icon = "🔴"
-
-    with col:
-
-        st.markdown(
-            f"""
-### {flag} {title}
-
-**{icon} {data['status']}**
-
-{data['time']}
-""",
-        )
-
-
-st.markdown("---")
-
-st.subheader("🌍 Live Market Status")
-
-c1, c2, c3, c4, c5 = st.columns(5)
-
-status_card(c1, "🇮🇳", "India", india)
-status_card(c2, "🇺🇸", "USA", usa)
-status_card(c3, "🇪🇺", "Europe", europe)
-status_card(c4, "💱", "Forex", forex)
-status_card(c5, "₿", "Crypto", crypto)
-
-st.markdown("---")
-with right:
-    st.metric(
-        "Time",
-        datetime.now().strftime("%H:%M:%S"),
-    )
-
-st.divider()
-
-# --------------------------------------------------
-# Sidebar
-# --------------------------------------------------
-
-st.sidebar.header("Filters")
-
-market = st.sidebar.selectbox(
-    "Market",
-    [
-        "All",
-        "India",
-        "Indian Indices",
-        "USA",
-        "Crypto",
-        "Global Macro",
-    ],
-)
-
-# --------------------------------------------------
-# Category
-# --------------------------------------------------
-
-if market == "India":
-
-    sectors = (
-        ["All"]
-        + sorted(
-            meta[
-                meta["country"].str.lower() == "india"
-            ]["sector"]
-            .dropna()
-            .unique()
-            .tolist()
-        )
-    )
-
-elif market == "USA":
-
-    sectors = (
-        ["All"]
-        + sorted(
-            meta[
-                meta["country"].str.lower() == "usa"
-            ]["sector"]
-            .dropna()
-            .unique()
-            .tolist()
-        )
-    )
-
-elif market == "Crypto":
-
-    sectors = (
-        ["All"]
-        + sorted(
-            meta[
-                meta["country"].str.lower() == "crypto"
-            ]["sector"]
-            .dropna()
-            .unique()
-            .tolist()
-        )
-    )
-
-elif market == "Indian Indices":
-
-    sectors = ["Indian Indices"]
-
-elif market == "Global Macro":
-
-    sectors = (
-        meta[
-            (meta["country"].str.lower() == "global")
-            & (meta["sector"] != "Indian Indices")
-        ]["sector"]
-        .dropna()
-        .unique()
-        .tolist()
-    )
-
-    sectors = ["All"] + sorted(sectors)
-
-else:
-
-    sectors = (
-        ["All"]
-        + sorted(meta["sector"].dropna().unique().tolist())
-    )
-
-sector = st.sidebar.selectbox(
-    "Category",
-    sectors,
-)
-
-search = st.sidebar.text_input(
-    "Search",
-)
-
-portfolio_only = st.sidebar.checkbox(
-    "💼 Portfolio Only",
-    value=False,
-)
-
-watchlist_only = st.sidebar.checkbox(
-    "👀 Watchlist Only",
-    value=False,
-)
-
-priority = st.sidebar.slider(
-    "⭐ Minimum Priority",
-    min_value=1,
-    max_value=5,
-    value=1,
-)
-
-st.sidebar.divider()
-
-assets_found = len(meta)
-
-st.sidebar.metric(
-    "Database Assets",
-    assets_found,
-)
-
-load = st.sidebar.button(
-    "🚀 Load Selected",
-    width="stretch",
-)
-
-refresh = st.sidebar.button(
-    "🔄 Clear Cache",
-    width="stretch",
-)
-
-if refresh:
-
-    st.cache_data.clear()
-
-    st.success("Cache Cleared")
-
-# --------------------------------------------------
-# Session
-# --------------------------------------------------
-
-if "market" not in st.session_state:
-    st.session_state.market = None
-
-# --------------------------------------------------
-# Load
-# --------------------------------------------------
-
-if load:
-
-    with st.spinner("Loading selected assets..."):
-
-        country = market
-
-        if market == "Indian Indices":
-            country = "Global"
-            sector = "Indian Indices"
-
-        elif market == "Global Macro":
-            country = "Global"
-
+    with st.spinner("Loading market intelligence..."):
         df, success, failed = DashboardLoader.load(
             {
-                "country": country,
-                "sector": sector,
-                "search": search,
-                "portfolio_only": portfolio_only,
-                "watchlist_only": watchlist_only,
-                "priority": priority,
+                "country": filters["country"],
+                "sector": filters["sector"],
+                "search": filters["search"],
+                "portfolio_only": filters["portfolio_only"],
+                "watchlist_only": filters["watchlist_only"],
+                "priority": filters["priority"],
             }
         )
 
@@ -278,78 +66,121 @@ if load:
         "failed": failed,
     }
 
-# --------------------------------------------------
-# Show
-# --------------------------------------------------
+    if not df.empty:
+        st.session_state.selected_ticker = df.iloc[0]["Ticker"]
+        st.session_state.chart = None
 
-market = st.session_state.market
 
-if market is None:
+def selected_stock(df):
 
-    st.info(
-        "Choose filters and click **Load Selected**."
+    if df.empty:
+        return None
+
+    tickers = df["Ticker"].tolist()
+    selected = st.session_state.selected_ticker
+
+    if selected not in tickers:
+        selected = tickers[0]
+
+    ticker = st.selectbox(
+        "Selected asset",
+        tickers,
+        index=tickers.index(selected),
     )
 
-    st.stop()
+    st.session_state.selected_ticker = ticker
 
-# --------------------------------------------------
-# Metrics
-# --------------------------------------------------
-
-m1, m2, m3 = st.columns(3)
-
-m1.metric(
-    "Loaded",
-    market["success"],
-)
-
-m2.metric(
-    "Failed",
-    market["failed"],
-)
-
-m3.metric(
-    "Displayed",
-    len(market["df"]),
-)
-
-st.divider()
-
-# --------------------------------------------------
-# Table
-# --------------------------------------------------
-
-df = market["df"]
-
-def color_change(val):
-
-    if val is None:
-        return ""
-
-    if val > 0:
-        return "color: green;"
-
-    if val < 0:
-        return "color: red;"
-
-    return "color: gray;"
+    return df[df["Ticker"] == ticker].iloc[0].to_dict()
 
 
-styled = (
-    df.style
-    .format(
-        {
-            "Price": "{:,.2f}",
-            "15m %": "{:+.2f}%",
-            "1H %": "{:+.2f}%",
-        }
-    )
-    .map(color_change, subset=["15m %"])
-    .map(color_change, subset=["1H %"])
-)
+def load_chart(ticker):
 
-st.dataframe(
-    styled,
-    width="stretch",
-    hide_index=True,
-)
+    if not ticker:
+        return None
+
+    cached = st.session_state.chart
+
+    if cached and cached["ticker"] == ticker:
+        return cached["df"]
+
+    with st.spinner("Loading chart..."):
+        chart_df = ChartService.history(ticker)
+
+    st.session_state.chart = {
+        "ticker": ticker,
+        "df": chart_df,
+    }
+
+    return chart_df
+
+
+def render_opportunity_center(df):
+
+    st.subheader("Best Opportunities")
+    TopOpportunities.render(df)
+
+
+def render_workbench(df):
+
+    Scanner.render(df)
+
+    st.divider()
+
+    stock = selected_stock(df)
+
+    StockDetails.render(stock)
+
+    if st.button("Load chart", use_container_width=True):
+
+        ticker = stock["Ticker"] if stock else None
+
+        Charts.render(
+            load_chart(ticker)
+        )
+
+
+def render_loaded_dashboard(market):
+
+    df = market["df"]
+    stats = DashboardStats.summary(df)
+
+    loaded, failed, displayed = st.columns(3)
+    loaded.metric("Loaded", market["success"])
+    failed.metric("Failed", market["failed"])
+    displayed.metric("Displayed", len(df))
+
+    Metrics.render(stats)
+    render_opportunity_center(df)
+    render_workbench(df)
+
+
+def main():
+
+    init_state()
+
+    meta = DashboardLoader.metadata()
+
+    Header.render()
+    MarketStatus.render()
+
+    filters = Sidebar.render(meta)
+
+    if filters["refresh"]:
+        st.cache_data.clear()
+        st.session_state.chart = None
+        st.success("Cache cleared.")
+
+    if filters["load"]:
+        load_market(filters)
+
+    market = st.session_state.market
+
+    if market is None:
+        st.info("Choose filters and load market data to begin.")
+        st.stop()
+
+    render_loaded_dashboard(market)
+
+
+if __name__ == "__main__":
+    main()

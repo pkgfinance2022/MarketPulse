@@ -32,6 +32,16 @@ class Asset:
     watchlist: bool = False
     portfolio: bool = False
     priority: int = 3
+    quantity: float = 0.0
+    average_buy: float = 0.0
+    target_allocation: float = 0.0
+    theme: str = ""
+    investment_theme: str = ""
+    thesis: str = ""
+    expected_cagr: float = 0.0
+    time_horizon: str = ""
+    next_review_date: str = ""
+    exit_conditions: str = ""
 
     asset_class: str = ""
     industry: str = ""
