@@ -26,17 +26,24 @@ class Asset:
     currency: str = ""
 
     # --------------------------------------------------
+    # Database Fields
+    # --------------------------------------------------
+
+    watchlist: bool = False
+    portfolio: bool = False
+    priority: int = 3
+
+    asset_class: str = ""
+    industry: str = ""
+    tags: str = ""
+
+    # --------------------------------------------------
     # Raw Market Data
     # --------------------------------------------------
 
     data_15m: pd.DataFrame = field(default_factory=pd.DataFrame)
-
     data_1h: pd.DataFrame = field(default_factory=pd.DataFrame)
-
     data_1d: pd.DataFrame = field(default_factory=pd.DataFrame)
-
-    # Weekly later
-
     data_1w: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     # --------------------------------------------------
@@ -44,9 +51,7 @@ class Asset:
     # --------------------------------------------------
 
     summary: Summary = field(default_factory=Summary)
-
     indicators: Indicators = field(default_factory=Indicators)
-
     scores: dict = field(default_factory=dict)
 
     # --------------------------------------------------
@@ -66,8 +71,4 @@ class Asset:
 
     def __repr__(self):
 
-        return (
-            f"Asset("
-            f"{self.symbol}, "
-            f"{self.category})"
-        )
+        return f"Asset({self.symbol}, {self.category})"

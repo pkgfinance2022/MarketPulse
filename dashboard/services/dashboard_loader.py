@@ -19,13 +19,13 @@ from utils.formatter import (
     change,
 )
 
+
 class DashboardLoader:
 
     @staticmethod
     def metadata():
 
-        loader = AssetLoader()
-        assets = loader.all_assets()
+        assets = AssetLoader().all_assets()
 
         rows = []
 
@@ -34,9 +34,14 @@ class DashboardLoader:
             rows.append(
                 {
                     "country": getattr(a, "country", ""),
-                    "sector": a.category,
+                    "sector": getattr(a, "category", ""),
+                    "industry": getattr(a, "industry", ""),
+                    "asset_class": getattr(a, "asset_class", ""),
                     "name": a.name,
                     "symbol": a.symbol,
+                    "portfolio": getattr(a, "portfolio", False),
+                    "watchlist": getattr(a, "watchlist", False),
+                    "priority": getattr(a, "priority", 3),
                 }
             )
 
@@ -45,39 +50,38 @@ class DashboardLoader:
     @staticmethod
     def load(filters):
 
-        loader = AssetLoader()
+        assets = AssetLoader().all_assets()
 
-        assets = loader.all_assets()
-
-       
-        # ------------------------
+        # ------------------------------------
         # Country
-        # ------------------------
+        # ------------------------------------
 
         if filters["country"] != "All":
 
             assets = [
                 a
                 for a in assets
-                if getattr(a, "country", "").strip().lower()
-                == filters["country"].strip().lower()
+                if a.country.lower() == filters["country"].lower()
             ]
 
-            # ------------------------
-            # Special Case:
-            # Global Macro should exclude Indian Indices
-            # ------------------------
+        # ------------------------------------
+        # Global Macro excludes Indian Indices
+        # ------------------------------------
 
-            if (
-                filters["country"] == "Global"
-                and filters["sector"] == "All"
-            ):
+        if (
+            filters["country"] == "Global"
+            and filters["sector"] == "All"
+        ):
 
-                assets = [
-                    a
-                    for a in assets
-                    if a.category != "Indian Indices"
-                ]
+            assets = [
+                a
+                for a in assets
+                if a.category != "Indian Indices"
+            ]
+
+        # ------------------------------------
+        # Sector
+        # ------------------------------------
 
         if filters["sector"] != "All":
 
@@ -87,9 +91,9 @@ class DashboardLoader:
                 if a.category == filters["sector"]
             ]
 
-        # ------------------------
+        # ------------------------------------
         # Search
-        # ------------------------
+        # ------------------------------------
 
         search = filters["search"].strip().lower()
 
@@ -102,8 +106,47 @@ class DashboardLoader:
                 or search in a.symbol.lower()
             ]
 
-        repo = MarketService().load_market(assets)
+        # ------------------------------------
+        # Portfolio
+        # ------------------------------------
 
+        if filters.get("portfolio_only", False):
+
+            assets = [
+                a
+                for a in assets
+                if getattr(a, "portfolio", False)
+            ]
+
+        # ------------------------------------
+        # Watchlist
+        # ------------------------------------
+
+        if filters.get("watchlist_only", False):
+
+            assets = [
+                a
+                for a in assets
+                if getattr(a, "watchlist", False)
+            ]
+
+        # ------------------------------------
+        # Download
+        # ------------------------------------
+
+        repo = MarketService().load_market(assets)
+        
+        # ------------------------------------
+        # Priority
+        # ------------------------------------
+
+        minimum_priority = filters.get("priority", 1)
+
+        assets = [
+            a
+            for a in assets
+            if getattr(a, "priority", 3) >= minimum_priority
+        ]
         rows = []
 
         success = 0
@@ -127,13 +170,26 @@ class DashboardLoader:
                     "Sector": asset.category,
                     "Asset": asset.name,
                     "Symbol": asset.symbol,
+
                     "Price": asset.summary.price,
+
+                    "15m %": asset.summary.change_15m,
+                    "1H %": asset.summary.change_1h,
+
                     "Score": asset.scores.get("overall"),
-                    "15m RSI": asset.indicators.m15.rsi14,
-                    "1H RSI": asset.indicators.h1.rsi14,
-                    "1D RSI": rsi(asset.indicators.d1.rsi14),
-                    "15m %": change(asset.summary.change_15m) if asset.summary.change_15m is not None else "--",
-                    "1H %": change(asset.summary.change_1h) if asset.summary.change_1h is not None else "--",
+
+                    "15m RSI": round(asset.indicators.m15.rsi14)
+                    if asset.indicators.m15.rsi14 is not None
+                    else None,
+
+                    "1H RSI": round(asset.indicators.h1.rsi14)
+                    if asset.indicators.h1.rsi14 is not None
+                    else None,
+
+                    "1D RSI": round(asset.indicators.d1.rsi14)
+                    if asset.indicators.d1.rsi14 is not None
+                    else None,
+
                     "15m Trend": trend(asset.indicators.m15.trend),
                     "1H Trend": trend(asset.indicators.h1.trend),
                     "1D Trend": trend(asset.indicators.d1.trend),
@@ -143,21 +199,9 @@ class DashboardLoader:
         df = pd.DataFrame(rows)
 
         if not df.empty:
-            df = df.sort_values("Score", ascending=False)
+            df = df.sort_values(
+                "Score",
+                ascending=False,
+            )
 
         return df, success, failed
-    def color_rsi(val):
-        if val >= 70:
-            return "color:red"
-        elif val >= 55:
-            return "color:green"
-        elif val >= 45:
-            return "color:orange"
-        return "color:blue"
-
-        styled = df.style.map(
-            color_rsi,
-            subset=["15m RSI", "1H RSI", "1D RSI"],
-        )
-
-        st.dataframe(styled, width="stretch")

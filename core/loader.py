@@ -38,20 +38,30 @@ class AssetLoader:
 
             for _, row in df.iterrows():
 
-                active = str(row.get("Active", "TRUE")).upper()
+                active = str(
+                    row.get("Active", "TRUE")
+                ).upper()
 
                 if active != "TRUE":
                     continue
 
-                assets.append(
-                    Asset(
-                        name=row["Name"],
-                        symbol=row["Symbol"],
-                        category=row["Sector"],
-                        exchange=row.get("Exchange", ""),
-                        currency="",
-                        country=row["Country"],
-                    )
+                asset = Asset(
+                    name=row["Name"],
+                    symbol=row["Symbol"],
+                    category=row["Sector"],
+                    exchange=row.get("Exchange", ""),
+                    currency="",
+                    country=row["Country"],
+
+                    watchlist=str(row.get("Watchlist", "FALSE")).upper() == "TRUE",
+                    portfolio=str(row.get("Portfolio", "FALSE")).upper() == "TRUE",
+                    priority=int(row.get("Priority", 3)),
+
+                    asset_class=row.get("AssetClass", ""),
+                    industry=row.get("Industry", ""),
+                    tags=row.get("Tags", ""),
                 )
+
+                assets.append(asset)
 
         return assets
