@@ -86,7 +86,6 @@ India,Equity,Railways,Heavy Engineering,BEML,BEML.NS,NSE,5,TRUE,FALSE,TRUE,railw
 India,Equity,Railways,Passenger Services,IRCTC,IRCTC.NS,NSE,4,TRUE,FALSE,TRUE,railways,
 
 India,Equity,Infrastructure,Engineering,Larsen & Toubro,LT.NS,NSE,5,TRUE,FALSE,TRUE,infra;capex,
-India,Equity,Infrastructure,Construction,NCC,NCC.NS,NSE,4,TRUE,FALSE,TRUE,infra,
 India,Equity,Infrastructure,Roads,KNR Constructions,KNRCON.NS,NSE,4,TRUE,FALSE,TRUE,roads,
 India,Equity,Infrastructure,Roads,PNC Infratech,PNCINFRA.NS,NSE,4,TRUE,FALSE,TRUE,roads,
 India,Equity,Infrastructure,Construction,Ahluwalia Contracts,AHLUCONT.NS,NSE,4,TRUE,FALSE,TRUE,construction,

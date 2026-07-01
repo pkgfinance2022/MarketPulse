@@ -11,11 +11,12 @@ from services.market_service import MarketService
 from services.summary_service import SummaryService
 from services.indicator_service import IndicatorService
 from services.score_service import ScoreService
-from dashboard.widgets.formatter import (
+from utils.formatter import (
     trend,
     rsi,
     score,
     price,
+    change,
 )
 
 class DashboardLoader:
@@ -126,11 +127,13 @@ class DashboardLoader:
                     "Sector": asset.category,
                     "Asset": asset.name,
                     "Symbol": asset.symbol,
-                    "Price": price(asset.summary.price),
-                    "Score": score(asset.scores.get("overall")),
-                    "15m RSI": rsi(asset.indicators.m15.rsi14),
-                    "1H RSI": rsi(asset.indicators.h1.rsi14),
+                    "Price": asset.summary.price,
+                    "Score": asset.scores.get("overall"),
+                    "15m RSI": asset.indicators.m15.rsi14,
+                    "1H RSI": asset.indicators.h1.rsi14,
                     "1D RSI": rsi(asset.indicators.d1.rsi14),
+                    "15m %": change(asset.summary.change_15m) if asset.summary.change_15m is not None else "--",
+                    "1H %": change(asset.summary.change_1h) if asset.summary.change_1h is not None else "--",
                     "15m Trend": trend(asset.indicators.m15.trend),
                     "1H Trend": trend(asset.indicators.h1.trend),
                     "1D Trend": trend(asset.indicators.d1.trend),
@@ -143,3 +146,18 @@ class DashboardLoader:
             df = df.sort_values("Score", ascending=False)
 
         return df, success, failed
+    def color_rsi(val):
+        if val >= 70:
+            return "color:red"
+        elif val >= 55:
+            return "color:green"
+        elif val >= 45:
+            return "color:orange"
+        return "color:blue"
+
+        styled = df.style.map(
+            color_rsi,
+            subset=["15m RSI", "1H RSI", "1D RSI"],
+        )
+
+        st.dataframe(styled, width="stretch")

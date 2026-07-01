@@ -54,4 +54,6 @@ class MarketService:
 
                 print(f"Failed : {asset.symbol} : {ex}")
 
+            
+
         return repository
