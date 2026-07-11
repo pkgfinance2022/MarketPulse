@@ -1,90 +1,190 @@
 """
-Market Pulse
+MarketPulse v2 dashboard shell.
 
-Application Entry Point
+The app coordinates services and widgets. Analysis and business rules live in
+the engines and services, while widgets only render already-prepared data.
 """
 
-from core.loader import AssetLoader
-from services.market_service import MarketService
-from services.summary_service import SummaryService
-from services.indicator_service import IndicatorService
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+import streamlit as st
+
+from dashboard.services.chart_service import ChartService
+from dashboard.services.dashboard_loader import DashboardLoader
+from dashboard.services.dashboard_stats import DashboardStats
+from dashboard.widgets.charts import Charts
+from dashboard.widgets.header import Header
+from dashboard.widgets.market_status import MarketStatus
+from dashboard.widgets.metrics import Metrics
+from dashboard.widgets.scanner import Scanner
+from dashboard.widgets.sidebar import Sidebar
+from dashboard.widgets.stock_details import StockDetails
+from dashboard.widgets.top_opportunities import TopOpportunities
 
 
-def fmt(value, decimals=2):
-    """Safely format values for display."""
-
-    if value is None:
-        return "-"
-
-    if isinstance(value, float):
-        return f"{value:.{decimals}f}"
-
-    return str(value)
+st.set_page_config(
+    page_title="MarketPulse",
+    page_icon="MP",
+    layout="wide",
+)
 
 
-def print_header():
+def init_state():
 
-    print()
-    print("=" * 190)
-    print("MARKET PULSE")
-    print("=" * 190)
+    defaults = {
+        "market": None,
+        "selected_ticker": None,
+        "chart": None,
+    }
+
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 
-def print_summary(repo):
+def load_market(filters):
 
-    print()
-    print("=" * 190)
-    print("MARKET SUMMARY")
-    print("=" * 190)
-
-    print(
-        f"{'Asset':20}"
-        f"{'Price':>12}"
-        f"{'15m RSI':>10}"
-        f"{'1H RSI':>10}"
-        f"{'1D RSI':>10}"
-        f"{'15m Trend':>15}"
-        f"{'1H Trend':>15}"
-        f"{'1D Trend':>15}"
-    )
-
-    print("-" * 190)
-
-    for asset in repo.all():
-
-        SummaryService.build(asset)
-        IndicatorService.build(asset)
-
-        print(
-            f"{asset.name:20}"
-            f"{fmt(asset.summary.price):>12}"
-            f"{fmt(asset.indicators.m15.rsi14):>10}"
-            f"{fmt(asset.indicators.h1.rsi14):>10}"
-            f"{fmt(asset.indicators.d1.rsi14):>10}"
-            f"{asset.indicators.m15.trend:>15}"
-            f"{asset.indicators.h1.trend:>15}"
-            f"{asset.indicators.d1.trend:>15}"
+    with st.spinner("Loading market intelligence..."):
+        df, success, failed = DashboardLoader.load(
+            {
+                "country": filters["country"],
+                "sector": filters["sector"],
+                "search": filters["search"],
+                "portfolio_only": filters["portfolio_only"],
+                "watchlist_only": filters["watchlist_only"],
+                "priority": filters["priority"],
+            }
         )
 
-    print()
-    print(f"Assets Loaded : {repo.count()}")
+    st.session_state.market = {
+        "df": df,
+        "success": success,
+        "failed": failed,
+    }
+
+    if not df.empty:
+        st.session_state.selected_ticker = df.iloc[0]["Ticker"]
+        st.session_state.chart = None
+
+
+def selected_stock(df):
+
+    if df.empty:
+        return None
+
+    tickers = df["Ticker"].tolist()
+    selected = st.session_state.selected_ticker
+
+    if selected not in tickers:
+        selected = tickers[0]
+
+    ticker = st.selectbox(
+        "Selected asset",
+        tickers,
+        index=tickers.index(selected),
+    )
+
+    st.session_state.selected_ticker = ticker
+
+    return df[df["Ticker"] == ticker].iloc[0].to_dict()
+
+
+def load_chart(ticker):
+
+    if not ticker:
+        return None
+
+    cached = st.session_state.chart
+
+    if cached and cached["ticker"] == ticker:
+        return cached["df"]
+
+    with st.spinner("Loading chart..."):
+        chart_df = ChartService.history(ticker)
+
+    st.session_state.chart = {
+        "ticker": ticker,
+        "df": chart_df,
+    }
+
+    return chart_df
+
+
+def render_opportunity_center(df):
+
+    st.subheader("Best Opportunities")
+    TopOpportunities.render(df)
+
+
+def render_workbench(df):
+
+    clicked_ticker = Scanner.render(df)
+
+    if clicked_ticker:
+        st.session_state.selected_ticker = clicked_ticker
+
+    st.divider()
+
+    stock = selected_stock(df)
+
+    StockDetails.render(stock)
+
+    st.divider()
+
+    ticker = stock["Ticker"] if stock else None
+
+    Charts.render(
+        load_chart(ticker)
+    )
+
+
+def render_loaded_dashboard(market):
+
+    df = market["df"]
+    stats = DashboardStats.summary(df)
+
+    loaded, failed, displayed = st.columns(3)
+    loaded.metric("Loaded", market["success"])
+    failed.metric("Failed", market["failed"])
+    displayed.metric("Displayed", len(df))
+
+    Metrics.render(stats)
+    render_opportunity_center(df)
+    render_workbench(df)
 
 
 def main():
 
-    print_header()
+    init_state()
 
-    loader = AssetLoader()
+    meta = DashboardLoader.metadata()
 
-    assets = loader.all_assets()
+    Header.render()
+    MarketStatus.render()
 
-    print(f"Assets Found : {len(assets)}")
+    filters = Sidebar.render(meta)
 
-    service = MarketService()
+    if filters["refresh"]:
+        st.cache_data.clear()
+        st.session_state.chart = None
+        st.success("Cache cleared.")
 
-    repository = service.load_market(assets)
+    if filters["load"] or st.session_state.market is None:
+        load_market(filters)
 
-    print_summary(repository)
+    market = st.session_state.market
+
+    if market is None:
+
+        load_market(filters)
+
+        market = st.session_state.market
+
+    render_loaded_dashboard(market)
 
 
 if __name__ == "__main__":

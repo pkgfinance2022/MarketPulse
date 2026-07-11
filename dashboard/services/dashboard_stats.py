@@ -36,9 +36,9 @@ class DashboardStats:
             "avg_score": float(round(df["AI Score"].mean(), 1)),
             "avg_rsi": float(round(df["RSI"].mean(), 1)),
             "avg_change": float(round(df["Change %"].mean(), 2)),
-            "buy": int((df["Signal"] == "BUY").sum()),
+            "buy": int(df["Signal"].isin(["BUY", "STRONG BUY"]).sum()),
             "hold": int((df["Signal"] == "HOLD").sum()),
-            "sell": int((df["Signal"] == "SELL").sum()),
+            "sell": int(df["Signal"].isin(["SELL", "STRONG SELL"]).sum()),
         }
 
     @staticmethod

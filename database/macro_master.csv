@@ -24,12 +24,11 @@ Global,Index,European Indices,Germany,Ger 40,^GDAXI,INDEX,4,TRUE,FALSE,TRUE,euro
 Global,Index,European Indices,United Kingdom,UK 100,^FTSE,INDEX,4,TRUE,FALSE,TRUE,europe,
 Global,Index,European Indices,France,FRA 40,^FCHI,INDEX,4,TRUE,FALSE,TRUE,europe,
 Global,Index,European Indices,Netherlands,NL 25,^AEX,INDEX,5,TRUE,FALSE,TRUE,netherlands,
-Global,Index,European Indices,Italy,Italy 40,^BIT40P,INDEX,5,TRUE,FALSE,TRUE,it40,
 
 Global,Index,Asian Indices,Japan,Nikkei 225,^N225,INDEX,4,TRUE,FALSE,TRUE,asia,
 Global,Index,Asian Indices,Hong Kong,Hang Seng,^HSI,INDEX,4,TRUE,FALSE,TRUE,china,
 Global,Index,Asian Indices,South Korea,KOSPI,^KS11,INDEX,5,TRUE,FALSE,TRUE,korea,
-Global,Index,Asian Indices,Singapore,STI,^STI,INDEX,4,TRUE,FALSE,TRUE,singapore,
+Global,Index,Asian Indices,Singapore,SIGI30,^STI,INDEX,4,TRUE,FALSE,TRUE,singapore,
 
 Global,Commodity,Commodities,Gold,Gold,GC=F,COMEX,5,TRUE,FALSE,TRUE,gold,
 Global,Commodity,Commodities,Silver,Silver,SI=F,COMEX,5,TRUE,FALSE,TRUE,silver,
@@ -45,9 +44,4 @@ Global,Forex,Currencies,USD/CHF,USD/CHF,USDCHF=X,FX,5,TRUE,FALSE,TRUE,swiss-fran
 Global,Forex,Currencies,USD/CAD,USD/CAD,USDCAD=X,FX,5,TRUE,FALSE,TRUE,canadian-dollar,
 Global,Forex,Currencies,AUD/USD,AUD/USD,AUDUSD=X,FX,5,TRUE,FALSE,TRUE,australian-dollar,
 Global,Forex,Currencies,NZD/USD,NZD/USD,NZDUSD=X,FX,5,TRUE,FALSE,TRUE,new-zealand-dollar,
-
-Global,Bond,Bonds,US 10Y Treasury,US 10Y,^TNX,BOND,5,TRUE,FALSE,TRUE,bonds,
-Global,Bond,Bonds,US 30Y Treasury,US 30Y,^TYX,BOND,4,TRUE,FALSE,TRUE,bonds,
-Global,Bond,Bonds,US 2Y Treasury,US 2Y,^IRX,BOND,4,TRUE,FALSE,TRUE,short-term,
-Global,Bond,Bonds,US 5Y Treasury,US 5Y,^FVX,BOND,4,TRUE,FALSE,TRUE,treasury,
 

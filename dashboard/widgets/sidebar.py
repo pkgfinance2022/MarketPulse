@@ -37,21 +37,27 @@ class Sidebar:
 
         st.sidebar.header("Filters")
 
+        markets = [
+            "All",
+            "India",
+            "USA",
+            "Crypto",
+            "Indian Indices",
+            "Global Macro",
+        ]
+
         market = st.sidebar.selectbox(
             "Market",
-            [
-                "All",
-                "India",
-                "USA",
-                "Crypto",
-                "Indian Indices",
-                "Global Macro",
-            ],
+            markets,
+            index=markets.index("Global Macro"),
         )
+
+        sectors = Sidebar._sectors(meta, market)
 
         sector = st.sidebar.selectbox(
             "Sector",
-            Sidebar._sectors(meta, market),
+            sectors,
+            index=0,
         )
 
         search = st.sidebar.text_input("Search")

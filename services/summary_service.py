@@ -6,6 +6,7 @@ for every Asset.
 """
 
 from core.asset import Asset
+from core.timeseries import time_based_pct_change
 
 
 class SummaryService:
@@ -32,6 +33,16 @@ class SummaryService:
         # Percentage Changes
         # --------------------------
 
+        # 15m/1H use real timestamps, not a fixed bar count - a fixed
+        # count silently spans into the PRIOR session right after a
+        # fresh market open (e.g. "4 bars back" for 1H becomes
+        # yesterday afternoon vs today's open when today only has 1
+        # bar so far), understating or misrepresenting the real
+        # trailing move. 4H/1D intentionally still span sessions (a
+        # daily change is supposed to cross into the prior session).
+        asset.summary.change_15m = time_based_pct_change(close, 15)
+        asset.summary.change_1h = time_based_pct_change(close, 60)
+
         def pct_change(periods: int):
 
             if len(close) <= periods:
@@ -42,7 +53,5 @@ class SummaryService:
 
             return round(((new - old) / old) * 100, 2)
 
-        asset.summary.change_15m = pct_change(1)
-        asset.summary.change_1h = pct_change(4)
         asset.summary.change_4h = pct_change(16)
         asset.summary.change_1d = pct_change(96)

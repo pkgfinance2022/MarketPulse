@@ -42,3 +42,11 @@ build/
 # Environment
 
 .env
+
+# Generated data (personal journal / backtest output, not source)
+
+database/parked_trades.csv
+database/alert_log.csv
+backtest_results*.csv
+backtest_pullback.csv
+fundamental_scan_results.csv

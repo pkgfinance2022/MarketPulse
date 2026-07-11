@@ -13,17 +13,22 @@ from analysis.signal_engine import SignalEngine
 from analysis.technical_engine import TechnicalEngine
 from analysis.valuation_engine import ValuationEngine
 from core.loader import AssetLoader
+from core.timeseries import time_based_pct_change
 from models.asset import AssetModel
+from providers.yahoo import YahooProvider
 from services.market_service import MarketService
 from services.summary_service import SummaryService
 from services.indicator_service import IndicatorService
-
+from dashboard.services.market_status_service import MarketStatusService
 
 class DashboardLoader:
+
+    GLOBAL_MACRO_INDIA_INCLUDE = {"^NSEI", "^NSEBANK"}
 
     CANONICAL_COLUMNS = [
         "Ticker",
         "Name",
+        "Status",
         "Market",
         "Country",
         "Sector",
@@ -91,7 +96,10 @@ class DashboardLoader:
         "1D EMA200",
 
         "1D %",
-        
+        "Intraday %",
+        "Setup",
+        "Reversal",
+
     ]
 
     @staticmethod
@@ -167,6 +175,39 @@ class DashboardLoader:
             "Technical Score": technical["technical_score"],
         }
 
+    @staticmethod
+    def _setup_label(trend, rsi):
+        """
+        Fallback label only - a cheap snapshot read off the
+        already-loaded 1H trend/RSI, used if the real RSI-wave screener
+        (dashboard/services/rsi_wave_status.py, run separately per
+        region load) doesn't have a label for this ticker yet.
+        """
+
+        rsi = rsi or 0.0
+
+        if trend == "Bullish":
+
+            if rsi <= 30:
+                return "🟢 Bullish · oversold pullback"
+
+            if rsi >= 70:
+                return "🟢 Bullish · stretched (high RSI)"
+
+            return "🟢 Bullish · trending"
+
+        if trend == "Bearish":
+
+            if rsi >= 70:
+                return "🔴 Bearish · overbought bounce"
+
+            if rsi <= 30:
+                return "🔴 Bearish · stretched (low RSI)"
+
+            return "🔴 Bearish · trending"
+
+        return "⚪ No clear trend"
+
     @classmethod
     def _canonical_row(cls, asset):
 
@@ -178,6 +219,7 @@ class DashboardLoader:
         row = {
             "Ticker": asset.symbol,
             "Name": asset.name,
+            "Status": MarketStatusService.status(asset),
             "Market": asset.asset_class,
             "Country": asset.country,
             "Sector": asset.category,
@@ -224,6 +266,21 @@ class DashboardLoader:
             "15m %": asset.summary.change_15m or 0.0,
             "1H %": asset.summary.change_1h or 0.0,
             "1D %": asset.summary.change_1d or 0.0,
+
+            # Short-term momentum blend (15m weighted lighter than 1H,
+            # since a lone 15m spike is noisier than a sustained 1H move).
+            "Intraday %": round(
+                0.4 * (asset.summary.change_15m or 0.0)
+                + 0.6 * (asset.summary.change_1h or 0.0),
+                2,
+            ),
+
+            "Setup": cls._setup_label(asset.indicators.h1.trend, asset.indicators.h1.rsi14),
+
+            # Fallback only - the real reversal-playbook screener
+            # (dashboard/services/reversal_status.py) overwrites this
+            # after a region load, same pattern as "Setup" above.
+            "Reversal": "⚪ Watching",
 
             # --------------------
             # Multi-timeframe RSI
@@ -277,6 +334,53 @@ class DashboardLoader:
 
         return row
 
+    @staticmethod
+    def refresh_intraday_prices(df):
+        """
+        Lightweight intraday refresh for auto-refresh loops: re-fetches
+        only 15m bars per ticker and patches Price/15m %/1H %/Intraday %
+        in place. Deliberately skips AssetLoader/MarketService/the
+        analysis engines - re-running the full `load()` pipeline on a
+        timer would re-download 15m/1h/1d history and re-score every
+        asset, which is both slow and unnecessary just to keep an
+        already-loaded scanner/chart feeling live.
+        """
+
+        if df.empty:
+            return df
+
+        provider = YahooProvider()
+        df = df.copy()
+
+        for idx, row in df.iterrows():
+
+            symbol = row["Ticker"]
+
+            try:
+                bars = provider.history(symbol, interval="15m", period="5d")
+            except Exception:
+                continue
+
+            if bars.empty or len(bars) < 2:
+                continue
+
+            close = bars["Close"]
+            latest = float(close.iloc[-1])
+
+            # Time-based lookback, not a fixed bar count - a fixed
+            # count silently spans into the PRIOR session right after
+            # a fresh market open (only today's first bar exists),
+            # turning an overnight gap into a mislabeled "1H %" move.
+            change_15m = time_based_pct_change(close, 15)
+            change_1h = time_based_pct_change(close, 60)
+
+            df.at[idx, "Price"] = round(latest, 2)
+            df.at[idx, "15m %"] = change_15m if change_15m is not None else 0.0
+            df.at[idx, "1H %"] = change_1h if change_1h is not None else 0.0
+            df.at[idx, "Intraday %"] = round(0.4 * (change_15m or 0.0) + 0.6 * (change_1h or 0.0), 2)
+
+        return df
+
     @classmethod
     def _asset_model(cls, asset):
 
@@ -312,7 +416,10 @@ class DashboardLoader:
             ]
 
         # ------------------------------------
-        # Global Macro excludes Indian Indices
+        # Global Macro excludes Indian Indices, except the two
+        # headline benchmarks (Nifty 50 / Nifty Bank) - genuinely
+        # global-relevant intraday indices, unlike the sector-level
+        # Nifty variants (IT/Auto/Pharma/...).
         # ------------------------------------
 
         if (
@@ -323,7 +430,7 @@ class DashboardLoader:
             assets = [
                 a
                 for a in assets
-                if a.category != "Indian Indices"
+                if a.category != "Indian Indices" or a.symbol in cls.GLOBAL_MACRO_INDIA_INCLUDE
             ]
 
         # ------------------------------------
