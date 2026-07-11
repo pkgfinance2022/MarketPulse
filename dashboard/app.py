@@ -13,10 +13,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
 from analysis.reversal_playbook import ReversalPlaybook
+from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
 from analysis.rsi_wave_strategy import RSIWaveStrategy
 from core.loader import AssetLoader
 from dashboard.services.alert_log import AlertLog
@@ -25,6 +27,7 @@ from dashboard.services.dashboard_loader import DashboardLoader
 from dashboard.services.dashboard_stats import DashboardStats
 from dashboard.services.fundamental_scan_service import FundamentalScanService
 from dashboard.services.reversal_status import ReversalStatusService
+from dashboard.services.reversal_status_daily import DailyReversalStatusService
 from dashboard.services.rsi_wave_status import RSIWaveStatusService
 from dashboard.services.stock_news_service import StockNewsService
 from dashboard.services.telegram_notifier import TelegramNotifier
@@ -55,6 +58,16 @@ UNIVERSE_TABS = [
 
 UNIVERSE_REFRESH_SECONDS = 3600   # full stock/crypto universes are much bigger than Global Indices - a slow, once-an-hour cadence keeps yfinance usage sane (explicitly requested)
 
+SCANNER_DETAIL_CHARS = 110   # st.dataframe cells don't wrap - a clean one-line summary here, full text stays in the per-ticker detail box
+
+
+def _scanner_detail(text):
+
+    if not text or len(text) <= SCANNER_DETAIL_CHARS:
+        return text or ""
+
+    return text[:SCANNER_DETAIL_CHARS].rstrip() + "…"
+
 
 def init_state():
 
@@ -79,6 +92,7 @@ def init_state():
         defaults[f"{prefix}_wave_states_seeded"] = False
         defaults[f"{prefix}_reversal_states"] = {}
         defaults[f"{prefix}_reversal_states_seeded"] = False
+        defaults[f"{prefix}_last_loaded_ts"] = 0
 
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -512,7 +526,7 @@ def load_global_indices(sector):
 
         wave_labels = {t: RSIWaveStrategy.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in wave_states.items()}
         df["Setup"] = df["Ticker"].map(wave_labels).fillna(df["Setup"])
-        df["Setup Detail"] = df["Ticker"].map({t: info["description"] for t, info in wave_states.items()}).fillna("")
+        df["Setup Detail"] = df["Ticker"].map({t: _scanner_detail(info["description"]) for t, info in wave_states.items()}).fillna("")
 
         # Second screener, same pattern - the Reversal Playbook (2
         # fetches/symbol: 1H + Daily). Roughly doubles region load time
@@ -523,7 +537,16 @@ def load_global_indices(sector):
 
         reversal_labels = {t: ReversalPlaybook.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in reversal_states.items()}
         df["Reversal"] = df["Ticker"].map(reversal_labels).fillna(df["Reversal"])
-        df["Reversal Detail"] = df["Ticker"].map({t: info["description"] for t, info in reversal_states.items()}).fillna("")
+        df["Reversal Detail"] = df["Ticker"].map({t: _scanner_detail(info["description"]) for t, info in reversal_states.items()}).fillna("")
+
+        # Third screener, same pattern - the Daily+Weekly Reversal
+        # Playbook, additive alongside the 1H one above.
+        with st.spinner("Scanning Daily+Weekly reversal playbook setups..."):
+            daily_reversal_states = DailyReversalStatusService.screen_states(df["Ticker"].tolist())
+
+        daily_reversal_labels = {t: DailyWeeklyReversalPlaybook.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in daily_reversal_states.items()}
+        df["Daily Reversal"] = df["Ticker"].map(daily_reversal_labels).fillna("⚪ Watching")
+        df["Daily Reversal Detail"] = df["Ticker"].map({t: _scanner_detail(info["description"]) for t, info in daily_reversal_states.items()}).fillna("")
 
     st.session_state.global_market = {
         "df": df,
@@ -660,6 +683,38 @@ def render_global_indices_live():
                 )
 
                 st.success(f"Parked {reversal['direction']} {selected} @ {reversal['price']}")
+
+        st.divider()
+        st.subheader(f"📆 {selected} — Reversal Playbook (Daily + Weekly)")
+
+        daily_reversal = DailyReversalStatusService.analyse(selected)
+
+        if daily_reversal is None:
+            st.info("Not enough Daily+Weekly history to evaluate this instrument yet.")
+        else:
+            st.info(daily_reversal["description"])
+
+        if daily_reversal and daily_reversal["direction"] and daily_reversal["stop_target"] and daily_reversal["stop_target"]["stop"] is not None:
+
+            dr_target = daily_reversal["stop_target"]
+
+            cols = st.columns(5)
+            cols[0].metric("Direction", daily_reversal["direction"])
+            cols[1].metric("Entry", daily_reversal["price"])
+            cols[2].metric("Stop", dr_target["stop"])
+            cols[3].metric("Target", dr_target["target1"])
+            cols[4].metric("Risk:Reward", f"1:{dr_target['risk_reward']}")
+
+            daily_reversal_notes = st.text_input("Notes (optional)", key=f"global_daily_reversal_notes_{selected}")
+
+            if st.button("📌 Park this trade", key=f"global_daily_reversal_park_btn_{selected}"):
+
+                TradeJournal.park(
+                    selected, daily_reversal["direction"], daily_reversal["price"], dr_target,
+                    daily_reversal["state"], daily_reversal["rsi"], notes=daily_reversal_notes,
+                )
+
+                st.success(f"Parked {daily_reversal['direction']} {selected} @ {daily_reversal['price']}")
 
 
 def render_parked_trades():
@@ -887,6 +942,35 @@ def render_global_indices_tab(meta):
     render_parked_trades()
 
 
+def _ensure_universe_state(prefix):
+    """
+    Defensive re-init for the per-universe session keys, called at the
+    top of every entry point that reads them (load_universe(),
+    _refresh_universe_body(), render_universe_live()) instead of
+    relying solely on init_state() having already run. Necessary
+    because a fragment's own run_every timer can fire independently of
+    main() - if the running process was hot-reloaded after a new
+    prefixed key was added to init_state()'s defaults, an
+    already-open session's fragment timer would otherwise hit a
+    KeyError on that key the next time it fires on its own, without
+    ever passing back through main()/init_state() first.
+    """
+
+    defaults = {
+        f"{prefix}_market": None,
+        f"{prefix}_selected_ticker": None,
+        f"{prefix}_wave_states": {},
+        f"{prefix}_wave_states_seeded": False,
+        f"{prefix}_reversal_states": {},
+        f"{prefix}_reversal_states_seeded": False,
+        f"{prefix}_last_loaded_ts": 0,
+    }
+
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+
 def load_universe(prefix, country):
     """
     Generic version of load_global_indices() for a whole stock/crypto
@@ -898,6 +982,8 @@ def load_universe(prefix, country):
     anyway (per explicit instruction to keep yfinance usage low across
     much bigger universes than Global Indices' ~25 symbols).
     """
+
+    _ensure_universe_state(prefix)
 
     df, success, failed = _load_market_cached(
         {
@@ -921,12 +1007,20 @@ def load_universe(prefix, country):
         wave_states = RSIWaveStatusService.screen_states(tickers)
         wave_labels = {t: RSIWaveStrategy.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in wave_states.items()}
         df["Setup"] = df["Ticker"].map(wave_labels).fillna(df["Setup"])
-        df["Setup Detail"] = df["Ticker"].map({t: info["description"] for t, info in wave_states.items()}).fillna("")
+        df["Setup Detail"] = df["Ticker"].map({t: _scanner_detail(info["description"]) for t, info in wave_states.items()}).fillna("")
 
         reversal_states = ReversalStatusService.screen_states(tickers)
         reversal_labels = {t: ReversalPlaybook.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in reversal_states.items()}
         df["Reversal"] = df["Ticker"].map(reversal_labels).fillna(df["Reversal"])
-        df["Reversal Detail"] = df["Ticker"].map({t: info["description"] for t, info in reversal_states.items()}).fillna("")
+        df["Reversal Detail"] = df["Ticker"].map({t: _scanner_detail(info["description"]) for t, info in reversal_states.items()}).fillna("")
+
+        # Daily+Weekly read (separate engine,
+        # analysis/reversal_playbook_daily.py) - additive alongside the
+        # two 1H-based columns above, everywhere.
+        daily_reversal_states = DailyReversalStatusService.screen_states(tickers)
+        daily_reversal_labels = {t: DailyWeeklyReversalPlaybook.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in daily_reversal_states.items()}
+        df["Daily Reversal"] = df["Ticker"].map(daily_reversal_labels).fillna("⚪ Watching")
+        df["Daily Reversal Detail"] = df["Ticker"].map({t: _scanner_detail(info["description"]) for t, info in daily_reversal_states.items()}).fillna("")
 
         _notify_universe_changes(prefix, name_map, wave_states, reversal_states)
 
@@ -1049,16 +1143,28 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states):
 
 def _refresh_universe_body(prefix, country):
     """
-    The only job of this fragment: reload + rescan the whole universe
-    once an hour (and once on initial mount, since fragments execute
-    inline as part of the first full script run). No interactive
-    widgets here on purpose - the Scanner/detail box live in
-    render_universe_live() below, a plain function so that clicking a
-    row there doesn't re-trigger this heavy rescan.
+    Reload + rescan the whole universe, but only if the last scan is
+    stale (>= UNIVERSE_REFRESH_SECONDS old) or one hasn't happened yet.
+    This fragment executes inline on every FULL script rerun anywhere
+    in the app (not just its own run_every timer - that's how
+    Streamlit fragments work), so without this staleness guard, any
+    unrelated interaction elsewhere on the page (e.g. a sidebar filter)
+    would trigger an 8-10 minute full universe rescan. The manual
+    "Scan Now" button in render_universe_tab() forces an immediate
+    reload by resetting the timestamp to 0 before this runs.
     """
 
-    load_universe(prefix, country)
-    st.caption(f"🕐 {country} universe last scanned just now - refreshes automatically every hour.")
+    _ensure_universe_state(prefix)
+
+    last_loaded = st.session_state[f"{prefix}_last_loaded_ts"]
+    stale = last_loaded == 0 or (time.time() - last_loaded) >= UNIVERSE_REFRESH_SECONDS
+
+    if stale:
+        load_universe(prefix, country)
+        st.session_state[f"{prefix}_last_loaded_ts"] = time.time()
+
+    age_minutes = round((time.time() - st.session_state[f"{prefix}_last_loaded_ts"]) / 60)
+    st.caption(f"🕐 {country} universe last scanned {age_minutes} min ago - refreshes automatically every hour, or click Scan Now above.")
 
 
 @st.fragment(run_every=UNIVERSE_REFRESH_SECONDS)
@@ -1090,6 +1196,8 @@ def render_universe_live(prefix, title):
     without re-fetching anything, since the actual hourly reload lives
     in the fragment above.
     """
+
+    _ensure_universe_state(prefix)
 
     market = st.session_state[f"{prefix}_market"]
 
@@ -1188,14 +1296,153 @@ def render_universe_live(prefix, title):
 
             st.success(f"Parked {reversal['direction']} {selected} @ {reversal['price']}")
 
+    # A separate Daily+Weekly read (analysis/reversal_playbook_daily.py)
+    # alongside the two 1H-based boxes above - additive everywhere,
+    # not a replacement for the hourly view.
+    st.divider()
+    st.subheader(f"📆 {selected} — Reversal Playbook (Daily + Weekly)")
+
+    daily_reversal = DailyReversalStatusService.analyse(selected)
+
+    if daily_reversal is None:
+        st.info("Not enough Daily+Weekly history to evaluate this instrument yet.")
+    else:
+        st.info(daily_reversal["description"])
+
+    if daily_reversal and daily_reversal["direction"] and daily_reversal["stop_target"] and daily_reversal["stop_target"]["stop"] is not None:
+
+        dr_target = daily_reversal["stop_target"]
+
+        cols = st.columns(5)
+        cols[0].metric("Direction", daily_reversal["direction"])
+        cols[1].metric("Entry", daily_reversal["price"])
+        cols[2].metric("Stop", dr_target["stop"])
+        cols[3].metric("Target", dr_target["target1"])
+        cols[4].metric("Risk:Reward", f"1:{dr_target['risk_reward']}")
+
+        daily_reversal_notes = st.text_input("Notes (optional)", key=f"{prefix}_daily_reversal_notes_{selected}")
+
+        if st.button("📌 Park this trade", key=f"{prefix}_daily_reversal_park_btn_{selected}"):
+
+            TradeJournal.park(
+                selected, daily_reversal["direction"], daily_reversal["price"], dr_target,
+                daily_reversal["state"], daily_reversal["rsi"], notes=daily_reversal_notes,
+            )
+
+            st.success(f"Parked {daily_reversal['direction']} {selected} @ {daily_reversal['price']}")
+
 
 def render_universe_tab(prefix, country, title):
 
-    st.subheader(f"{title} — Reversal Playbook + RSI Wave")
-    st.caption("Full universe, auto-refreshed once an hour (not intraday-live like Global Indices) - too many symbols to rescan every few minutes without risking yfinance rate limits.")
+    _ensure_universe_state(prefix)
+
+    header_col, button_col = st.columns([4, 1])
+
+    with header_col:
+        st.subheader(f"{title} — Reversal Playbook + RSI Wave")
+        st.caption(
+            "Full universe, auto-refreshed once an hour (not intraday-live like Global Indices) - too many symbols "
+            "to rescan every few minutes without risking yfinance rate limits. Includes both the 1H Reversal "
+            "Playbook and a separate Daily+Weekly read."
+        )
+
+    with button_col:
+        st.write("")
+        if st.button("🔄 Scan Now", key=f"{prefix}_manual_scan", use_container_width=True):
+            st.session_state[f"{prefix}_last_loaded_ts"] = 0
 
     UNIVERSE_REFRESH_FRAGMENTS[prefix]()
     render_universe_live(prefix, title)
+
+
+# (label, session key, columns to scan for actionable rows -> keywords that mark that column's label as "act now")
+COMMAND_CENTER_SOURCES = [
+    ("🌍 Global Indices", "global_market"),
+    ("🇺🇸 US Stocks", "us_market"),
+    ("🇮🇳 Indian Stocks", "india_market"),
+    ("🪙 Crypto", "crypto_market"),
+]
+
+COMMAND_CENTER_COLUMNS = [
+    # column, detail column, keywords that identify an "act now" label (vs. watching/alert/forming)
+    ("Setup", "Setup Detail", ("entry",)),
+    ("Reversal", "Reversal Detail", ("signal", "trigger", "continuation")),
+    ("Daily Reversal", "Daily Reversal Detail", ("signal", "trigger", "continuation")),
+]
+
+
+def render_command_center_tab():
+    """
+    Pulls together every currently-actionable row (a fresh RSI Wave
+    entry, or a BUY/SELL Reversal Playbook signal - 1H or Daily+Weekly)
+    across all four scanned tabs into one table, so you don't have to
+    click through each tab to see what's live right now.
+
+    Reads only what's already cached in each tab's session state - no
+    extra fetches - so a tab you haven't opened yet this session simply
+    can't be included (flagged explicitly rather than silently omitted).
+    """
+
+    st.subheader("🎯 Command Center — Best Found, All Tabs")
+    st.caption(
+        "Aggregates every actionable signal already sitting in Global Indices, US Stocks, Indian Stocks, and "
+        "Crypto - reads each tab's cached scan, doesn't trigger any new fetches. Visit a tab at least once "
+        "this session for it to show up here."
+    )
+
+    rows = []
+    not_scanned = []
+
+    for label, session_key in COMMAND_CENTER_SOURCES:
+
+        market = st.session_state.get(session_key)
+
+        if market is None:
+            not_scanned.append(label)
+            continue
+
+        df = market["df"]
+
+        if df.empty:
+            continue
+
+        for column, detail_col, keywords in COMMAND_CENTER_COLUMNS:
+
+            if column not in df.columns:
+                continue
+
+            mask = df[column].astype(str).str.lower().str.contains("|".join(keywords))
+
+            for _, row in df[mask].iterrows():
+
+                rows.append(
+                    {
+                        "Source": label,
+                        "Ticker": row["Ticker"],
+                        "Name": row["Name"],
+                        "Price": row.get("Price"),
+                        "Signal Type": column,
+                        "Signal": row[column],
+                        "Why": row.get(detail_col, ""),
+                    }
+                )
+
+    if not_scanned:
+        st.info("Not yet scanned this session: " + ", ".join(not_scanned) + " — visit those tabs at least once to include them here.")
+
+    if not rows:
+        st.success("Nothing actionable right now across the tabs scanned so far.")
+        return
+
+    combined = pd.DataFrame(rows)
+
+    st.dataframe(
+        combined,
+        use_container_width=True,
+        hide_index=True,
+        height=600,
+        column_config={"Why": st.column_config.TextColumn("Why", width=420)},
+    )
 
 
 def render_fundamentals_tab():
@@ -1393,10 +1640,15 @@ def main():
 
         market = st.session_state.market
 
-    # Global Indices first so it's what's on screen when the app opens.
-    tab_global, tab_us, tab_india, tab_crypto, tab_main, tab_fundamentals = st.tabs(
-        ["🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "📊 Scanner", "💰 Fundamentals"]
+    # Command Center first - a cross-tab summary of what's already been
+    # scanned. Global Indices second so it's still the first *live*
+    # tab a fresh session lands on.
+    tab_command, tab_global, tab_us, tab_india, tab_crypto, tab_main, tab_fundamentals = st.tabs(
+        ["🎯 Command Center", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "📊 Scanner", "💰 Fundamentals"]
     )
+
+    with tab_command:
+        render_command_center_tab()
 
     with tab_global:
         render_global_indices_tab(meta)

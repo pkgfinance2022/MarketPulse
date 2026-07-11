@@ -17,6 +17,7 @@ class Scanner:
         "Name",
         "Setup",
         "Reversal",
+        "Daily Reversal",
     ]
 
     @staticmethod
@@ -300,6 +301,8 @@ class Scanner:
         "Setup Detail",
         "Reversal",
         "Reversal Detail",
+        "Daily Reversal",
+        "Daily Reversal Detail",
     ]
 
     @staticmethod
@@ -372,6 +375,9 @@ class Scanner:
         if "Reversal" in df.columns:
             styled = styled.map(Scanner.color_reversal, subset=["Reversal"])
 
+        if "Daily Reversal" in df.columns:
+            styled = styled.map(Scanner.color_reversal, subset=["Daily Reversal"])
+
         # .style.map() above only applies color - it doesn't touch number
         # formatting, so Streamlit falls back to full float precision
         # (values already rounded upstream can still render with 6+
@@ -384,9 +390,12 @@ class Scanner:
 
         styled = styled.format(decimal_cols)
 
+        # "large" tops out narrower than these sentences need - an
+        # explicit pixel width actually gives room to read them
+        # without the ellipsis truncation "large" still hit.
         column_config = {
-            col: st.column_config.TextColumn(col.replace(" Detail", " — why"), width="large")
-            for col in ("Setup Detail", "Reversal Detail")
+            col: st.column_config.TextColumn(col.replace(" Detail", " — why"), width=420)
+            for col in ("Setup Detail", "Reversal Detail", "Daily Reversal Detail")
             if col in df.columns
         }
 
