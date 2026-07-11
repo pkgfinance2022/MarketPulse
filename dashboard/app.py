@@ -1430,7 +1430,7 @@ def render_command_center_tab():
         if df.empty:
             continue
 
-        for column, detail_col, keywords in COMMAND_CENTER_COLUMNS:
+        for column, full_col, base_timeframe, keywords in COMMAND_CENTER_COLUMNS:
 
             if column not in df.columns:
                 continue
@@ -1439,15 +1439,18 @@ def render_command_center_tab():
 
             for _, row in df[mask].iterrows():
 
+                why = row.get(full_col, "")
+
                 rows.append(
                     {
                         "Source": label,
                         "Ticker": row["Ticker"],
                         "Name": row["Name"],
                         "Price": row.get("Price"),
+                        "Timeframe": _command_center_timeframe(base_timeframe, why),
                         "Signal Type": column,
                         "Signal": row[column],
-                        "Why": row.get(detail_col, ""),
+                        "Why": why,
                     }
                 )
 
@@ -1465,7 +1468,7 @@ def render_command_center_tab():
         use_container_width=True,
         hide_index=True,
         height=600,
-        column_config={"Why": st.column_config.TextColumn("Why", width=420)},
+        column_config={"Why": st.column_config.TextColumn("Why", width=520)},
     )
 
 
