@@ -10,6 +10,8 @@ so this now costs 2 yfinance fetches per symbol (1H 730d + Daily 5y),
 same order of magnitude as before.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+
 from analysis.reversal_playbook import ReversalPlaybook
 
 ACTIONABLE_STATES = {
@@ -17,6 +19,8 @@ ACTIONABLE_STATES = {
     "SELL_SIGNAL": "SHORT",
     "SELL_SIGNAL_CONTINUATION": "SHORT",
 }
+
+SCREEN_WORKERS = 8   # yfinance calls are network-bound (waiting on Yahoo), not CPU-bound - a thread pool cuts wall-clock time roughly in proportion to worker count without needing multiprocessing
 
 
 class ReversalStatusService:
@@ -44,29 +48,45 @@ class ReversalStatusService:
         }
 
     @classmethod
+    def _screen_one(cls, symbol, period_1h, period_daily):
+
+        try:
+            result = ReversalPlaybook.run_symbol(symbol, period_1h=period_1h, period_daily=period_daily)
+
+            if result:
+                description, state, _ = ReversalPlaybook.describe(result)
+                last = result["trace"][-1]
+                return symbol, {
+                    "state": state,
+                    "description": description,
+                    "price": float(last["price"]),
+                    "rsi": round(last["rsi"], 2),
+                }
+
+            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None}
+
+        except Exception:
+            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None}
+
+    @classmethod
     def screen_states(cls, symbols, period_1h="730d", period_daily="5y"):
+        """
+        Fetches every symbol concurrently (thread pool - these calls
+        spend nearly all their time waiting on Yahoo's network
+        response, not on CPU), instead of one at a time. This is the
+        difference between a 140-symbol universe taking minutes vs.
+        tens of seconds.
+        """
 
         states = {}
 
-        for symbol in symbols:
+        with ThreadPoolExecutor(max_workers=SCREEN_WORKERS) as executor:
 
-            try:
-                result = ReversalPlaybook.run_symbol(symbol, period_1h=period_1h, period_daily=period_daily)
+            futures = [executor.submit(cls._screen_one, symbol, period_1h, period_daily) for symbol in symbols]
 
-                if result:
-                    description, state, _ = ReversalPlaybook.describe(result)
-                    last = result["trace"][-1]
-                    states[symbol] = {
-                        "state": state,
-                        "description": description,
-                        "price": float(last["price"]),
-                        "rsi": round(last["rsi"], 2),
-                    }
-                else:
-                    states[symbol] = {"state": "NONE", "description": "", "price": None, "rsi": None}
-
-            except Exception:
-                states[symbol] = {"state": "NONE", "description": "", "price": None, "rsi": None}
+            for future in futures:
+                symbol, info = future.result()
+                states[symbol] = info
 
         return states
 

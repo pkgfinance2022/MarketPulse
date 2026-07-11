@@ -7,6 +7,8 @@ share the same fetch+walk so the screener and the detail view can
 never disagree about what's happening for a given symbol.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+
 import ta
 
 from analysis.rsi_wave_strategy import RSIWaveStrategy
@@ -17,6 +19,8 @@ ACTIONABLE_STATES = {
     "ENTRY_SHORT": "SHORT",
     "WAVE_SHORT": "SHORT",
 }
+
+SCREEN_WORKERS = 8
 
 
 class RSIWaveStatusService:
@@ -99,9 +103,31 @@ class RSIWaveStatusService:
         }
 
     @classmethod
+    def _screen_one(cls, symbol, period):
+
+        try:
+            trace, _ = RSIWaveStrategy.run_symbol(symbol, period=period)
+
+            if trace:
+                description, state = RSIWaveStrategy.describe(trace)
+                last = trace[-1]
+                return symbol, {
+                    "state": state,
+                    "description": description,
+                    "price": last["price"],
+                    "rsi": round(last["rsi"], 2),
+                }
+
+            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None}
+
+        except Exception:
+            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None}
+
+    @classmethod
     def screen_states(cls, symbols, period="730d"):
         """
-        One fetch+walk per symbol - returns
+        Fetches every symbol concurrently (thread pool - network-bound,
+        not CPU-bound). Returns
         {symbol: {"state":..., "price":..., "rsi":...}}. Shared by the
         scanner label screener and the notification-check fragment so
         both always agree, and carries enough context (price/RSI) for
@@ -110,25 +136,13 @@ class RSIWaveStatusService:
 
         states = {}
 
-        for symbol in symbols:
+        with ThreadPoolExecutor(max_workers=SCREEN_WORKERS) as executor:
 
-            try:
-                trace, _ = RSIWaveStrategy.run_symbol(symbol, period=period)
+            futures = [executor.submit(cls._screen_one, symbol, period) for symbol in symbols]
 
-                if trace:
-                    description, state = RSIWaveStrategy.describe(trace)
-                    last = trace[-1]
-                    states[symbol] = {
-                        "state": state,
-                        "description": description,
-                        "price": last["price"],
-                        "rsi": round(last["rsi"], 2),
-                    }
-                else:
-                    states[symbol] = {"state": "NONE", "description": "", "price": None, "rsi": None}
-
-            except Exception:
-                states[symbol] = {"state": "NONE", "description": "", "price": None, "rsi": None}
+            for future in futures:
+                symbol, info = future.result()
+                states[symbol] = info
 
         return states
 

@@ -58,16 +58,6 @@ UNIVERSE_TABS = [
 
 UNIVERSE_REFRESH_SECONDS = 3600   # full stock/crypto universes are much bigger than Global Indices - a slow, once-an-hour cadence keeps yfinance usage sane (explicitly requested)
 
-SCANNER_DETAIL_CHARS = 110   # st.dataframe cells don't wrap - a clean one-line summary here, full text stays in the per-ticker detail box
-
-
-def _scanner_detail(text):
-
-    if not text or len(text) <= SCANNER_DETAIL_CHARS:
-        return text or ""
-
-    return text[:SCANNER_DETAIL_CHARS].rstrip() + "…"
-
 
 def init_state():
 
@@ -526,7 +516,7 @@ def load_global_indices(sector):
 
         wave_labels = {t: RSIWaveStrategy.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in wave_states.items()}
         df["Setup"] = df["Ticker"].map(wave_labels).fillna(df["Setup"])
-        df["Setup Detail"] = df["Ticker"].map({t: _scanner_detail(info["description"]) for t, info in wave_states.items()}).fillna("")
+        df["Setup Full"] = df["Ticker"].map({t: info["description"] for t, info in wave_states.items()}).fillna("")
 
         # Second screener, same pattern - the Reversal Playbook (2
         # fetches/symbol: 1H + Daily). Roughly doubles region load time
@@ -537,7 +527,7 @@ def load_global_indices(sector):
 
         reversal_labels = {t: ReversalPlaybook.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in reversal_states.items()}
         df["Reversal"] = df["Ticker"].map(reversal_labels).fillna(df["Reversal"])
-        df["Reversal Detail"] = df["Ticker"].map({t: _scanner_detail(info["description"]) for t, info in reversal_states.items()}).fillna("")
+        df["Reversal Full"] = df["Ticker"].map({t: info["description"] for t, info in reversal_states.items()}).fillna("")
 
         # Third screener, same pattern - the Daily+Weekly Reversal
         # Playbook, additive alongside the 1H one above.
@@ -546,7 +536,7 @@ def load_global_indices(sector):
 
         daily_reversal_labels = {t: DailyWeeklyReversalPlaybook.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in daily_reversal_states.items()}
         df["Daily Reversal"] = df["Ticker"].map(daily_reversal_labels).fillna("⚪ Watching")
-        df["Daily Reversal Detail"] = df["Ticker"].map({t: _scanner_detail(info["description"]) for t, info in daily_reversal_states.items()}).fillna("")
+        df["Daily Reversal Full"] = df["Ticker"].map({t: info["description"] for t, info in daily_reversal_states.items()}).fillna("")
 
     st.session_state.global_market = {
         "df": df,
@@ -1007,12 +997,12 @@ def load_universe(prefix, country):
         wave_states = RSIWaveStatusService.screen_states(tickers)
         wave_labels = {t: RSIWaveStrategy.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in wave_states.items()}
         df["Setup"] = df["Ticker"].map(wave_labels).fillna(df["Setup"])
-        df["Setup Detail"] = df["Ticker"].map({t: _scanner_detail(info["description"]) for t, info in wave_states.items()}).fillna("")
+        df["Setup Full"] = df["Ticker"].map({t: info["description"] for t, info in wave_states.items()}).fillna("")
 
         reversal_states = ReversalStatusService.screen_states(tickers)
         reversal_labels = {t: ReversalPlaybook.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in reversal_states.items()}
         df["Reversal"] = df["Ticker"].map(reversal_labels).fillna(df["Reversal"])
-        df["Reversal Detail"] = df["Ticker"].map({t: _scanner_detail(info["description"]) for t, info in reversal_states.items()}).fillna("")
+        df["Reversal Full"] = df["Ticker"].map({t: info["description"] for t, info in reversal_states.items()}).fillna("")
 
         # Daily+Weekly read (separate engine,
         # analysis/reversal_playbook_daily.py) - additive alongside the
@@ -1020,7 +1010,7 @@ def load_universe(prefix, country):
         daily_reversal_states = DailyReversalStatusService.screen_states(tickers)
         daily_reversal_labels = {t: DailyWeeklyReversalPlaybook.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in daily_reversal_states.items()}
         df["Daily Reversal"] = df["Ticker"].map(daily_reversal_labels).fillna("⚪ Watching")
-        df["Daily Reversal Detail"] = df["Ticker"].map({t: _scanner_detail(info["description"]) for t, info in daily_reversal_states.items()}).fillna("")
+        df["Daily Reversal Full"] = df["Ticker"].map({t: info["description"] for t, info in daily_reversal_states.items()}).fillna("")
 
         _notify_universe_changes(prefix, name_map, wave_states, reversal_states)
 
@@ -1383,12 +1373,25 @@ def render_command_center_tab():
     can't be included (flagged explicitly rather than silently omitted).
     """
 
-    st.subheader("🎯 Command Center — Best Found, All Tabs")
-    st.caption(
-        "Aggregates every actionable signal already sitting in Global Indices, US Stocks, Indian Stocks, and "
-        "Crypto - reads each tab's cached scan, doesn't trigger any new fetches. Visit a tab at least once "
-        "this session for it to show up here."
-    )
+    header_col, button_col = st.columns([4, 1])
+
+    with header_col:
+        st.subheader("🎯 Command Center — Best Found, All Tabs")
+        st.caption(
+            "Aggregates every actionable signal already sitting in Global Indices, US Stocks, Indian Stocks, and "
+            "Crypto - reads each tab's cached scan, doesn't trigger any new fetches. Visit a tab at least once "
+            "this session for it to show up here, then use Refresh below to pick up anything scanned since."
+        )
+
+    with button_col:
+        st.write("")
+        # All tab bodies run in this same script pass, in order, with
+        # Command Center rendered FIRST - so on the very run a tab
+        # finishes its own scan, this table is already drawn and can't
+        # reflect it yet. A rerun re-reads session state from the top,
+        # by which point the other tabs' last completed scan is there.
+        if st.button("🔄 Refresh", key="command_center_refresh", use_container_width=True):
+            st.rerun()
 
     rows = []
     not_scanned = []

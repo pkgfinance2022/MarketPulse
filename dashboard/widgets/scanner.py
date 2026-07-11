@@ -289,7 +289,12 @@ class Scanner:
     ]
 
     # For traders who want "what's happening and is it worth looking
-    # at" at a glance, not a full technical-analysis grid.
+    # at" at a glance, not a full technical-analysis grid. The "why"
+    # columns were tried here too, but st.dataframe cells don't wrap -
+    # cramming a full sentence into a narrow grid cell made the whole
+    # table unreadable. The full, non-truncated description already
+    # shows in the per-ticker detail box below the table on row click -
+    # that's a better place to read it than a grid cell.
     COMPACT_COLUMNS = [
         "Status",
         "Ticker",
@@ -298,11 +303,8 @@ class Scanner:
         "15m %",
         "1H %",
         "Setup",
-        "Setup Detail",
         "Reversal",
-        "Reversal Detail",
         "Daily Reversal",
-        "Daily Reversal Detail",
     ]
 
     @staticmethod
@@ -390,15 +392,6 @@ class Scanner:
 
         styled = styled.format(decimal_cols)
 
-        # "large" tops out narrower than these sentences need - an
-        # explicit pixel width actually gives room to read them
-        # without the ellipsis truncation "large" still hit.
-        column_config = {
-            col: st.column_config.TextColumn(col.replace(" Detail", " — why"), width=420)
-            for col in ("Setup Detail", "Reversal Detail", "Daily Reversal Detail")
-            if col in df.columns
-        }
-
         event = st.dataframe(
             styled,
             use_container_width=True,
@@ -407,7 +400,6 @@ class Scanner:
             on_select="rerun",
             selection_mode="single-row",
             key=f"{key_prefix}_table",
-            column_config=column_config,
         )
 
         selected_rows = event.selection.rows if event and event.selection else []
