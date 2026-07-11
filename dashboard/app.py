@@ -1354,11 +1354,32 @@ COMMAND_CENTER_SOURCES = [
 ]
 
 COMMAND_CENTER_COLUMNS = [
-    # column, detail column, keywords that identify an "act now" label (vs. watching/alert/forming)
-    ("Setup", "Setup Detail", ("entry",)),
-    ("Reversal", "Reversal Detail", ("signal", "trigger", "continuation")),
-    ("Daily Reversal", "Daily Reversal Detail", ("signal", "trigger", "continuation")),
+    # column, full-text column, base timeframe, keywords that identify an "act now" label (vs. watching/alert/forming)
+    ("Setup", "Setup Full", "Hourly", ("entry",)),
+    ("Reversal", "Reversal Full", "Hourly", ("signal", "trigger", "continuation")),
+    ("Daily Reversal", "Daily Reversal Full", "Daily", ("signal", "trigger", "continuation")),
 ]
+
+
+def _command_center_timeframe(base_timeframe, why_text):
+    """
+    The engine that FIRED the signal runs on `base_timeframe`, but its
+    description text can also carry a higher-timeframe confluence note
+    (the 1H Reversal engine appends "Daily confluence"/"Daily Path C";
+    the Daily+Weekly engine appends "Weekly confluence"/"Weekly Path
+    C") - surfaced here so it's not lost in a plain "Hourly"/"Daily"
+    label.
+    """
+
+    text = (why_text or "").lower()
+
+    if "daily confluence" in text or "daily path c" in text:
+        return f"{base_timeframe} + Daily"
+
+    if "weekly confluence" in text or "weekly path c" in text:
+        return f"{base_timeframe} + Weekly"
+
+    return base_timeframe
 
 
 def render_command_center_tab():
