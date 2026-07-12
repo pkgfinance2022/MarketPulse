@@ -18,6 +18,7 @@ class Scanner:
         "Setup",
         "Reversal",
         "Daily Reversal",
+        "Weekly",
     ]
 
     @staticmethod
@@ -308,7 +309,7 @@ class Scanner:
     ]
 
     @staticmethod
-    def render(df, default_sort=None, key_prefix="scanner", compact=False):
+    def render(df, default_sort=None, key_prefix="scanner", compact=False, columns=None, title="🔍 Market Scanner", height=700):
         """
         Renders the scanner table and returns the ticker of the
         currently selected row (or None if nothing is selected /
@@ -317,19 +318,23 @@ class Scanner:
         separate dropdown.
 
         `key_prefix` keeps widget keys unique when the Scanner is
-        rendered more than once in the same script run (e.g. the main
-        tab and the Global Indices tab both showing a scanner).
+        rendered more than once in the same script run (e.g. several
+        timeframe-specific tables on the same tab).
 
         `compact` switches to a bare-minimum column set (Status,
         Ticker, Name, Price, 1H %, Setup) instead of the full
-        multi-timeframe grid.
+        multi-timeframe grid - ignored if `columns` is given.
+
+        `columns` overrides both of the above with an exact column
+        list, for callers that want a specific timeframe's table (e.g.
+        just the Daily columns) rather than either preset.
         """
 
         if df.empty:
             st.warning("No assets found.")
             return None
 
-        st.subheader("🔍 Market Scanner")
+        st.subheader(title)
 
         df = Scanner._sort_controls(df, default_sort, key_prefix)
 
@@ -337,7 +342,7 @@ class Scanner:
         # Columns to DISPLAY ONLY
         # ==========================
 
-        display_columns = Scanner.COMPACT_COLUMNS if compact else Scanner.FULL_COLUMNS
+        display_columns = columns if columns is not None else (Scanner.COMPACT_COLUMNS if compact else Scanner.FULL_COLUMNS)
 
         display_columns = [
             c
@@ -380,6 +385,9 @@ class Scanner:
         if "Daily Reversal" in df.columns:
             styled = styled.map(Scanner.color_reversal, subset=["Daily Reversal"])
 
+        if "Weekly" in df.columns:
+            styled = styled.map(Scanner.color_reversal, subset=["Weekly"])
+
         # .style.map() above only applies color - it doesn't touch number
         # formatting, so Streamlit falls back to full float precision
         # (values already rounded upstream can still render with 6+
@@ -396,7 +404,7 @@ class Scanner:
             styled,
             use_container_width=True,
             hide_index=True,
-            height=700,
+            height=height,
             on_select="rerun",
             selection_mode="single-row",
             key=f"{key_prefix}_table",

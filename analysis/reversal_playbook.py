@@ -76,6 +76,21 @@ class ReversalPlaybook:
     TARGET_PCT = 1.25              # placeholder - explicitly left for the user to tune
     DAILY_CONFLUENCE_RECENT_DAYS = 3   # how long the daily multi-try breakout note stays "fresh"
 
+    # --- Uptrend RSI-40 support (independent confluence note) ---
+    # Observed pattern: once price has held above the 1H 200 EMA for a
+    # sustained run (not just a fresh cross), a pullback to ~RSI 40
+    # that holds as support and bounces is often a good continuation
+    # entry - "not always, but not a thing to skip." Deliberately does
+    # NOT reintroduce a live 15m data feed (that dual-timeframe
+    # complexity was explicitly removed earlier) - the description
+    # just notes that 15m often shows its own oversold-then-65
+    # readiness at the same moment, as context, not a computed check.
+    UPTREND_MIN_STREAK_BARS = 50   # how long price must have held above the 1H 200 EMA to call it a "definite run"
+    UPTREND_SUPPORT_ZONE_LOW = 35
+    UPTREND_SUPPORT_ZONE_HIGH = 45
+    UPTREND_SUPPORT_RESET_LEVEL = 55   # RSI must rally back above this to re-arm a fresh support test
+    UPTREND_SUPPORT_RECENT_BARS = 5    # how long the note stays "fresh" after firing
+
     # ------------------------------------------------------------------
     # Data prep
     # ------------------------------------------------------------------
@@ -385,6 +400,15 @@ class ReversalPlaybook:
         # failed breakout attempt (the "breakout failed" read).
         bars_since_rejection_trigger = None
 
+        # Uptrend RSI-40 support: counts consecutive bars price has
+        # held above the 1H 200 EMA (resets the instant it closes
+        # below), and tracks whether RSI has dipped into the 35-45
+        # support band during a qualifying run, armed/consumed the
+        # same debounce shape as the other whipsaw-prone triggers.
+        bars_above_ema200_streak = 0
+        uptrend_support_armed = False
+        uptrend_support_consumed = False
+
         trace = []
 
         prev_rsi = None
@@ -439,6 +463,30 @@ class ReversalPlaybook:
 
             if prev_above_ema20 is None:
                 prev_above_ema20 = above_ema20
+
+            if above_ema200:
+                bars_above_ema200_streak += 1
+            else:
+                bars_above_ema200_streak = 0
+                uptrend_support_armed = False
+                uptrend_support_consumed = False
+
+            in_definite_uptrend = bars_above_ema200_streak >= cls.UPTREND_MIN_STREAK_BARS
+
+            uptrend_rsi40_support = False
+
+            if in_definite_uptrend:
+
+                if not uptrend_support_consumed and cls.UPTREND_SUPPORT_ZONE_LOW <= rsi < cls.UPTREND_SUPPORT_ZONE_HIGH:
+                    uptrend_support_armed = True
+
+                if uptrend_support_armed and rsi >= cls.UPTREND_SUPPORT_ZONE_HIGH and prev_rsi < cls.UPTREND_SUPPORT_ZONE_HIGH:
+                    uptrend_rsi40_support = True
+                    uptrend_support_consumed = True
+                    uptrend_support_armed = False
+
+                if rsi >= cls.UPTREND_SUPPORT_RESET_LEVEL:
+                    uptrend_support_consumed = False
 
             if above_ema200 and not prev_above_ema200:
                 bars_since_cross_up = 0
@@ -641,6 +689,7 @@ class ReversalPlaybook:
                     "phase": phase,
                     "event": event,
                     "path_c_forming": path_c_forming,
+                    "uptrend_rsi40_support": uptrend_rsi40_support,
                     "preceded_by_rejection": preceded_by_rejection,
                     "reverses_sell": reverses_sell,
                     "rsi": rsi,
@@ -771,6 +820,25 @@ class ReversalPlaybook:
 
         if last["daily_path_c_forming"]:
             daily_note += " 🔵 Daily Path C forming — Daily RSI holding 60-65 as support with price above the Daily 200 EMA."
+
+        # Uptrend RSI-40 support - independent confluence, same
+        # additive treatment as the daily notes above. "Not always,
+        # but not a thing to skip": price has held above the 1H 200
+        # EMA for a sustained run, and RSI just tested ~40 as support
+        # and bounced - often a good continuation entry. 15m often
+        # shows its own oversold-to-65 readiness at the same moment
+        # (observed, not computed here - no live 15m feed).
+        last_uptrend_support_bar = next((bar for bar in reversed(trace) if bar["uptrend_rsi40_support"]), None)
+
+        if last_uptrend_support_bar is not None:
+            bars_since = len(trace) - 1 - trace.index(last_uptrend_support_bar)
+
+            if bars_since <= cls.UPTREND_SUPPORT_RECENT_BARS:
+                daily_note += (
+                    f" 🟢 Uptrend RSI-40 support: price has held above the 1H 200 EMA for a sustained run, and RSI "
+                    f"just tested ~40 support and bounced - often a good continuation entry (not always, but worth "
+                    f"noting). 15m often shows its own oversold-to-65 readiness at the same time."
+                )
 
         last_event_bar = next((bar for bar in reversed(trace) if bar["event"]), None)
         recent = last_event_bar is not None and trace.index(last_event_bar) >= len(trace) - 3

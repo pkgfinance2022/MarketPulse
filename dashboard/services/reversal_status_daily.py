@@ -32,6 +32,7 @@ class DailyReversalStatusService:
             return None
 
         description, state, levels = DailyWeeklyReversalPlaybook.describe(result)
+        weekly_description, weekly_state = DailyWeeklyReversalPlaybook.weekly_describe(result)
 
         last = result["trace"][-1]
 
@@ -43,6 +44,8 @@ class DailyReversalStatusService:
             "price": float(last["price"]),
             "rsi": round(last["rsi"], 2),
             "stop_target": levels,
+            "weekly_state": weekly_state,
+            "weekly_description": weekly_description,
         }
 
     @classmethod
@@ -53,18 +56,21 @@ class DailyReversalStatusService:
 
             if result:
                 description, state, _ = DailyWeeklyReversalPlaybook.describe(result)
+                weekly_description, weekly_state = DailyWeeklyReversalPlaybook.weekly_describe(result)
                 last = result["trace"][-1]
                 return symbol, {
                     "state": state,
                     "description": description,
                     "price": float(last["price"]),
                     "rsi": round(last["rsi"], 2),
+                    "weekly_state": weekly_state,
+                    "weekly_description": weekly_description,
                 }
 
-            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None}
+            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None, "weekly_state": "NONE", "weekly_description": ""}
 
         except Exception:
-            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None}
+            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None, "weekly_state": "NONE", "weekly_description": ""}
 
     @classmethod
     def screen_states(cls, symbols, period_daily="10y", period_weekly="15y"):

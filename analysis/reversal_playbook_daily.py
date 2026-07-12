@@ -796,3 +796,64 @@ class DailyWeeklyReversalPlaybook:
         _, state, _ = cls.describe(result)
 
         return cls.STATE_LABELS.get(state, "⚪ Watching")
+
+    WEEKLY_STATE_LABELS = {
+        "NONE": "⚪ No data",
+        "WATCHING": "⚪ Watching",
+        "MULTI_TRY_BREAKOUT": "📅 Multi-try breakout",
+        "PATH_C_CONFIRMED": "📅 Path C confirmed",
+        "PATH_C_FORMING": "🔵 Path C forming",
+    }
+
+    @classmethod
+    def weekly_describe(cls, result):
+        """
+        Weekly-level read, independent of the Daily BUY/SELL machine
+        above - the Weekly timeframe here is confluence-only (no own
+        buy/sell state machine, same as the Daily confluence notes on
+        top of the 1H engine), so this surfaces whichever weekly
+        confluence signal is most recently relevant: a confirmed
+        multi-try breakout or Path C (within
+        WEEKLY_CONFLUENCE_RECENT_WEEKS), else whether one is currently
+        forming, else just the current Weekly RSI. No extra fetch -
+        reuses the same result already computed by run_symbol().
+        """
+
+        if result is None or not result["trace"]:
+            return "Not enough Weekly history to evaluate this instrument yet.", "NONE"
+
+        trace = result["trace"]
+        last = trace[-1]
+        weekly_rsi = round(last["weekly_rsi"], 2) if pd.notna(last["weekly_rsi"]) else None
+
+        last_event_bar = next((bar for bar in reversed(trace) if bar["weekly_event"]), None)
+
+        if last_event_bar is not None:
+            weeks_since = (last["time"] - last_event_bar["time"]).total_seconds() / (86400 * 7)
+
+            if weeks_since <= cls.WEEKLY_CONFLUENCE_RECENT_WEEKS:
+                return (
+                    f"📅 Weekly multi-try breakout — RSI broke above {cls.WEEKLY_ZONE_HIGH} after multiple failed tries "
+                    f"(weekly RSI {round(last_event_bar['weekly_rsi'], 2)}).",
+                    "MULTI_TRY_BREAKOUT",
+                )
+
+        last_path_c_bar = next((bar for bar in reversed(trace) if bar["weekly_path_c_event"]), None)
+
+        if last_path_c_bar is not None:
+            weeks_since = (last["time"] - last_path_c_bar["time"]).total_seconds() / (86400 * 7)
+
+            if weeks_since <= cls.WEEKLY_CONFLUENCE_RECENT_WEEKS:
+                return (
+                    f"📅 Weekly Path C confirmed — RSI held 65 as support and price reclaimed the Weekly 200 EMA "
+                    f"(weekly RSI {round(last_path_c_bar['weekly_rsi'], 2)}).",
+                    "PATH_C_CONFIRMED",
+                )
+
+        if last["weekly_path_c_forming"]:
+            return (
+                f"🔵 Weekly Path C forming — Weekly RSI ({weekly_rsi}) holding 60-65 as support with price above the Weekly 200 EMA.",
+                "PATH_C_FORMING",
+            )
+
+        return f"⚪ Watching — Weekly RSI {weekly_rsi}, no confluence active.", "WATCHING"
