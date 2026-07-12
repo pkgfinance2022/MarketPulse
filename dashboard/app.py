@@ -428,6 +428,15 @@ def load_global_indices(sector):
         )
 
     if not df.empty:
+        # ATR as a % of price - already computed, no extra fetch.
+        # Normalizes wildly different instrument types (index points
+        # vs FX pips vs commodity prices) onto one comparable scale,
+        # so "Nikkei is more volatile than currencies right now" or
+        # "NASDAQ more than DAX/CAC" becomes a sortable column instead
+        # of an eyeballed guess.
+        df["Volatility %"] = (df["ATR"] / df["Price"] * 100).replace([float("inf"), -float("inf")], None)
+
+    if not df.empty:
 
         # One extra 730d/1H fetch+walk per symbol to classify where each
         # one sits in the RSI wave state machine right now - this is the
@@ -460,9 +469,14 @@ def load_global_indices(sector):
         # removed earlier). Only checked for symbols whose 1H has
         # ALREADY confirmed - a confirmation lens on a small subset,
         # one extra 15m/5d fetch each, not ~25 more fetches every load.
+        # "Confirmed" covers the RSI-crossed-65 states AND the Uptrend
+        # RSI-40 support note (touched oversold, struggled back above
+        # ~40, holding it as support - the same "15m should show its
+        # own signal at that moment" pattern, described twice now).
         confirmed_tickers = [
             t for t, info in reversal_states.items()
             if info["state"] in ("BUY_ALERT_CONFIRM", "BUY_ALERT_CONFIRM_PATH_C_FORMING", "BUY_SIGNAL")
+            or "Uptrend RSI-40 support" in info["description"]
         ]
 
         fifteen_min_labels = {}
@@ -538,6 +552,17 @@ def render_global_indices_live():
 
     st.caption("🔴 Live — refreshes every 45s (scanner: 15m bars · pullback setup: 1H)")
 
+    # "Where did 65 just get crossed" - a quick at-a-glance highlight,
+    # since that's often where the real move starts. Reuses the
+    # already-computed Reversal label (no extra fetch) rather than a
+    # separate table - BUY_ALERT_CONFIRM and its Path C variant both
+    # mean "RSI just crossed 65, watching for the actual entry."
+    just_crossed_65 = df[df["Reversal"].astype(str).str.contains("crossed 65|Path C forming", regex=True)]
+
+    if not just_crossed_65.empty:
+        names = ", ".join(f"{row['Ticker']} ({row['Name']})" for _, row in just_crossed_65.iterrows())
+        st.info(f"🎯 Just crossed 65 (1H) — game may happen here: {names}")
+
     # Three separate tables instead of one wide mixed-timeframe grid -
     # each timeframe's signal(s) get their own focused view. All three
     # drive the same selected-ticker detail boxes below, whichever one
@@ -560,7 +585,13 @@ def render_global_indices_live():
         title="📆 Daily", height=350,
     )
 
-    ticker = ticker_15m or ticker_1h or ticker_1d
+    ticker_vol = Scanner.render(
+        df, default_sort="Volatility %", key_prefix="global_vol", compact=False,
+        columns=["Status", "Ticker", "Name", "Price", "Volatility %", "1H %"],
+        title="🌡 Volatility Ranking — where to focus right now", height=350,
+    )
+
+    ticker = ticker_15m or ticker_1h or ticker_1d or ticker_vol
 
     if ticker:
         st.session_state.global_selected_ticker = ticker

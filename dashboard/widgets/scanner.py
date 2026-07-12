@@ -20,6 +20,7 @@ class Scanner:
         "Daily Reversal",
         "Weekly",
         "15m Setup",
+        "Volatility %",
     ]
 
     @staticmethod
@@ -74,6 +75,30 @@ class Scanner:
 
         if v <= 30:
             return "color:#0b6fb4;font-weight:bold;"  # oversold
+
+        return ""
+
+    @staticmethod
+    def color_volatility(v):
+        """
+        ATR-as-%-of-price, so the same thresholds mean roughly the
+        same thing across an index, a currency pair, or a commodity -
+        unlike raw ATR points, which aren't comparable across those.
+        """
+
+        if pd.isna(v):
+            return ""
+
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return ""
+
+        if v >= 2.0:
+            return "color:#c00000;font-weight:bold;"  # notably volatile right now
+
+        if v <= 0.5:
+            return "color:#888888;"  # quiet
 
         return ""
 
@@ -389,6 +414,9 @@ class Scanner:
         if "Weekly" in df.columns:
             styled = styled.map(Scanner.color_reversal, subset=["Weekly"])
 
+        if "Volatility %" in df.columns:
+            styled = styled.map(Scanner.color_volatility, subset=["Volatility %"])
+
         # .style.map() above only applies color - it doesn't touch number
         # formatting, so Streamlit falls back to full float precision
         # (values already rounded upstream can still render with 6+
@@ -398,6 +426,9 @@ class Scanner:
 
         if "Price" in df.columns:
             decimal_cols["Price"] = "{:.2f}"
+
+        if "Volatility %" in df.columns:
+            decimal_cols["Volatility %"] = "{:.2f}"
 
         styled = styled.format(decimal_cols)
 

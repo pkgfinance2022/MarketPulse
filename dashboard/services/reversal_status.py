@@ -20,7 +20,7 @@ ACTIONABLE_STATES = {
     "SELL_SIGNAL_CONTINUATION": "SHORT",
 }
 
-SCREEN_WORKERS = 8   # yfinance calls are network-bound (waiting on Yahoo), not CPU-bound - a thread pool cuts wall-clock time roughly in proportion to worker count without needing multiprocessing
+SCREEN_WORKERS = 3   # yfinance calls are network-bound (waiting on Yahoo), not CPU-bound - a thread pool still helps at a small worker count. Kept low deliberately: Streamlit Community Cloud's free-tier container has a much lower OS thread limit than local dev - a higher count here caused "RuntimeError: can't start new thread" crashes in production that never showed up locally.
 
 
 class ReversalStatusService:

@@ -18,7 +18,7 @@ ACTIONABLE_STATES = {
     "SELL_SIGNAL_CONTINUATION": "SHORT",
 }
 
-SCREEN_WORKERS = 8
+SCREEN_WORKERS = 3   # kept low - Streamlit Community Cloud's free-tier container has a much lower OS thread limit than local dev; a higher count caused "can't start new thread" crashes in production
 
 
 class DailyReversalStatusService:
