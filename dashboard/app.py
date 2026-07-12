@@ -17,6 +17,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+from analysis import fifteen_min_readiness
 from analysis.reversal_playbook import ReversalPlaybook
 from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
 from analysis.rsi_wave_strategy import RSIWaveStrategy
@@ -454,6 +455,34 @@ def load_global_indices(sector):
         df["Reversal"] = df["Ticker"].map(reversal_labels).fillna(df["Reversal"])
         df["Reversal Full"] = df["Ticker"].map({t: info["description"] for t, info in reversal_states.items()}).fillna("")
 
+        # 15m readiness - NOT an independent scan across the whole
+        # universe (that dual-timeframe complexity was explicitly
+        # removed earlier). Only checked for symbols whose 1H has
+        # ALREADY confirmed - a confirmation lens on a small subset,
+        # one extra 15m/5d fetch each, not ~25 more fetches every load.
+        confirmed_tickers = [
+            t for t, info in reversal_states.items()
+            if info["state"] in ("BUY_ALERT_CONFIRM", "BUY_ALERT_CONFIRM_PATH_C_FORMING", "BUY_SIGNAL")
+        ]
+
+        fifteen_min_labels = {}
+        fifteen_min_full = {}
+
+        if confirmed_tickers:
+
+            with st.spinner(f"Checking 15m readiness for {len(confirmed_tickers)} confirmed symbol(s)..."):
+
+                for t in confirmed_tickers:
+
+                    readiness = fifteen_min_readiness.check_readiness(t)
+
+                    if readiness:
+                        fifteen_min_labels[t] = readiness["label"]
+                        fifteen_min_full[t] = f"{readiness['label']} (15m RSI {readiness['rsi']})"
+
+        df["15m Setup"] = df["Ticker"].map(fifteen_min_labels).fillna("— (needs 1H confirm first)")
+        df["15m Setup Full"] = df["Ticker"].map(fifteen_min_full).fillna("")
+
         # Third screener, same pattern - the Daily+Weekly Reversal
         # Playbook, additive alongside the 1H one above.
         with st.spinner("Scanning Daily+Weekly reversal playbook setups..."):
@@ -515,7 +544,7 @@ def render_global_indices_live():
     # you click a row in.
     ticker_15m = Scanner.render(
         df, default_sort="15m %", key_prefix="global_15m", compact=False,
-        columns=["Status", "Ticker", "Name", "Price", "15m %"],
+        columns=["Status", "Ticker", "Name", "Price", "15m %", "15m Setup"],
         title="⏱ 15-Minute", height=350,
     )
 
@@ -819,7 +848,13 @@ Both are standalone notes, not gates — they appear alongside whatever the 1H e
 
 **🟢 Uptrend RSI-40 support (independent confluence)**
 
-Once price has held above the **1H 200 EMA** for a sustained run (50+ bars — a "definite run," not a fresh cross), a pullback to the **35-45 RSI zone** that holds as support and bounces back above 45 is flagged as a continuation note — "not always, but not a thing to skip." Debounced the same way as the other triggers (only re-arms after RSI rallies back above 55), and fades a few bars after firing. 15m often shows its own oversold-to-65 readiness at the same moment (an observed pattern, not a live 15m computation — that dual-timeframe complexity was deliberately removed earlier).
+Once price has held above the **1H 200 EMA** for a sustained run (50+ bars — a "definite run," not a fresh cross), a pullback to the **35-45 RSI zone** that holds as support and bounces back above 45 is flagged as a continuation note — "not always, but not a thing to skip." Debounced the same way as the other triggers (only re-arms after RSI rallies back above 55), and fades a few bars after firing.
+
+---
+
+**⏱ 15m readiness (Global Indices only — a confirmation lens, not an independent scan)**
+
+15m is never scanned across the whole universe (that dual-timeframe complexity was explicitly removed earlier). Instead, once a symbol's 1H Reversal state has **already confirmed** (RSI crossed 65, Path C forming, or a BUY signal fired), one extra 15m/5d fetch checks whether 15m RSI has recently touched oversold (≤30) and is now moving back toward/through 65 — the same "getting ready" pattern observed to often coincide with the 1H confirmation. Shown as its own column in the **⏱ 15-Minute** table; everything else shows "— (needs 1H confirm first)" since it's genuinely not computed for those symbols.
 
 ---
 

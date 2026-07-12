@@ -19,6 +19,7 @@ class Scanner:
         "Reversal",
         "Daily Reversal",
         "Weekly",
+        "15m Setup",
     ]
 
     @staticmethod
