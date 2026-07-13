@@ -604,7 +604,10 @@ def render_global_indices_live():
     vix_note = _vix_risk_note(df)
 
     if vix_note:
-        st.warning(vix_note) if vix_note.startswith("🔴") else st.info(vix_note)
+        if vix_note.startswith("🔴"):
+            st.warning(vix_note)
+        else:
+            st.info(vix_note)
 
     # "Where did 65 just get crossed" - a quick at-a-glance highlight,
     # since that's often where the real move starts. Reuses the
