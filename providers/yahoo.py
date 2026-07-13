@@ -14,15 +14,23 @@ class YahooProvider:
         interval="1d",
         period="1y",
     ):
+        """
+        Uses yf.Ticker(symbol).history(), NOT yf.download() - every
+        call site here fetches one symbol at a time, but yf.download()
+        always routes through yfinance's own internal multi-threaded
+        bulk-download path (via the `multitasking` package) regardless
+        of how many tickers you pass it, spawning its OWN thread pool
+        on top of whatever ThreadPoolExecutor calls this from. That
+        compounded with this app's own thread usage to exceed
+        Streamlit Cloud's container thread limit ("RuntimeError: can't
+        start new thread"). Ticker.history() is a single direct
+        request with no internal threading at all.
+        """
 
-        df = yf.download(
-            symbol,
+        df = yf.Ticker(symbol).history(
             interval=interval,
             period=period,
             auto_adjust=True,
-            progress=False,
-            group_by="column",
-            multi_level_index=False,
         )
 
         if df.empty:
