@@ -87,7 +87,12 @@ class DailyWeeklyReversalPlaybook:
 
         close, high, low = df["Close"], df["High"], df["Low"]
 
-        rsi = ta.momentum.rsi(close, window=14)
+        # RSI on OHLC4 (typical price), not raw Close - see
+        # analysis/reversal_playbook.py's _prepare_1h for the real-data
+        # case that motivated this (a threshold touch missed by Close
+        # alone, caught by OHLC4). EMA/price levels still use Close.
+        typical_price = (df["Open"] + high + low + close) / 4
+        rsi = ta.momentum.rsi(typical_price, window=14)
 
         return {
             "close": close,
@@ -245,7 +250,8 @@ class DailyWeeklyReversalPlaybook:
     def _prepare_weekly(cls, df):
 
         close = df["Close"]
-        rsi = ta.momentum.rsi(close, window=14)
+        typical_price = (df["Open"] + df["High"] + df["Low"] + close) / 4
+        rsi = ta.momentum.rsi(typical_price, window=14)
         ema200 = ta.trend.ema_indicator(close, window=200)
 
         path_c_forming, path_c_confirmed = cls._weekly_support_reclaim(rsi, close, ema200)

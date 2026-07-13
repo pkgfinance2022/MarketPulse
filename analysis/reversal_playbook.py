@@ -102,7 +102,14 @@ class ReversalPlaybook:
 
         close, high, low = df["Close"], df["High"], df["Low"]
 
-        rsi = ta.momentum.rsi(close, window=14)
+        # RSI computed on OHLC4 (typical price), not raw Close - a
+        # single-bar wick/close print right at a threshold (e.g. a
+        # touch of 22) can register on OHLC4 but miss on Close-only by
+        # a hair, confirmed against real data (CL=F touched 21.61 on
+        # OHLC4 vs 23.66 on Close for the same bar). EMA/price levels
+        # elsewhere still use Close - only RSI's own input changes.
+        typical_price = (df["Open"] + high + low + close) / 4
+        rsi = ta.momentum.rsi(typical_price, window=14)
 
         return {
             "close": close,
@@ -266,7 +273,8 @@ class ReversalPlaybook:
     def _prepare_daily(cls, df):
 
         close = df["Close"]
-        rsi = ta.momentum.rsi(close, window=14)
+        typical_price = (df["Open"] + df["High"] + df["Low"] + close) / 4
+        rsi = ta.momentum.rsi(typical_price, window=14)
         ema200 = ta.trend.ema_indicator(close, window=200)
 
         path_c_forming, path_c_confirmed = cls._daily_support_reclaim(rsi, close, ema200)
@@ -351,6 +359,18 @@ class ReversalPlaybook:
 
         phase = "NONE"
         wave_start_time = None
+
+        # Path D: same touch(22) -> confirm(65) -> retest-1H-200-EMA
+        # idea as Path B, but tracked in a fully separate phase that
+        # does NOT require price above the Daily 200 EMA to arm. Path
+        # B is deliberately a "trend-following" setup (only considered
+        # in an already-bullish daily context); Path D is the explicit
+        # counter-daily-trend complement - a genuine 1H trend change
+        # (crossed and now holding its own 200 EMA as support) even
+        # while the broader daily trend hasn't turned yet. Riskier, so
+        # kept as its own labeled path rather than merged into Path B.
+        phase_d = "NONE"
+        wave_start_time_d = None
 
         # Tracks how many bars ago price crossed up through EMA200,
         # for Path B's "crossed up AND now retesting support" check,
@@ -590,6 +610,40 @@ class ReversalPlaybook:
                     phase = "NONE"
                     wave_start_time = None
 
+            # ---------------- Path D (counter-daily-trend variant of Path B) ----------------
+            # Fully independent phase - arms on the same RSI touch(22)
+            # -> confirm(65) sequence, but with no Daily-trend
+            # pre-filter at all. Only actually fires the event when
+            # price is currently BELOW the Daily 200 EMA - if it's
+            # above, Path B (the trend-following version) already
+            # covers it, so this stays silent rather than duplicate.
+
+            if phase_d == "NONE" and rsi <= cls.BUY_OVERSOLD_TOUCH:
+                phase_d = "BUY_ALERT_TOUCH"
+                wave_start_time_d = timestamp
+
+            elif phase_d == "BUY_ALERT_TOUCH":
+
+                if rsi >= cls.BUY_CONFIRM_LEVEL and prev_rsi < cls.BUY_CONFIRM_LEVEL:
+                    phase_d = "BUY_ALERT_CONFIRM"
+
+            elif phase_d == "BUY_ALERT_CONFIRM":
+
+                retesting_support_d = (
+                    bars_since_cross_up is not None
+                    and pd.notna(ema200) and ema200
+                    and above_ema200
+                    and abs(price - ema200) / ema200 * 100 <= cls.RETEST_BAND_PCT
+                )
+
+                if retesting_support_d:
+
+                    if event is None and price_below_daily:
+                        event = "BUY_SIGNAL_PATH_D"
+
+                    phase_d = "NONE"
+                    wave_start_time_d = None
+
             # ---------------- SELL side (independent triggers) ----------------
 
             if bars_since_rejection_trigger is not None:
@@ -678,7 +732,7 @@ class ReversalPlaybook:
                 breakdown_consumed = False
 
             reverses_sell = (
-                event in ("BUY_SIGNAL_PATH_A", "BUY_SIGNAL_PATH_B", "BUY_SIGNAL_PATH_C")
+                event in ("BUY_SIGNAL_PATH_A", "BUY_SIGNAL_PATH_B", "BUY_SIGNAL_PATH_C", "BUY_SIGNAL_PATH_D")
                 and last_sell_trigger_bars_ago is not None
                 and last_sell_trigger_bars_ago <= 10
             )
@@ -704,6 +758,7 @@ class ReversalPlaybook:
                     "swing_low": swing_low,
                     "swing_high": swing_high,
                     "wave_start_time": wave_start_time,
+                    "wave_start_time_d": wave_start_time_d,
                 }
             )
 
@@ -847,20 +902,23 @@ class ReversalPlaybook:
 
             event = last_event_bar["event"]
 
-            if event in ("BUY_SIGNAL_PATH_A", "BUY_SIGNAL_PATH_B", "BUY_SIGNAL_PATH_C"):
+            if event in ("BUY_SIGNAL_PATH_A", "BUY_SIGNAL_PATH_B", "BUY_SIGNAL_PATH_C", "BUY_SIGNAL_PATH_D"):
 
-                levels = cls._buy_levels(result["ind_1h"], last_event_bar["wave_start_time"], price)
+                wave_start = last_event_bar["wave_start_time_d"] if event == "BUY_SIGNAL_PATH_D" else last_event_bar["wave_start_time"]
+                levels = cls._buy_levels(result["ind_1h"], wave_start, price)
 
                 path_names = {
                     "BUY_SIGNAL_PATH_A": "A (EMA20/200 far apart)",
                     "BUY_SIGNAL_PATH_B": "B (200 EMA reclaimed + retest)",
                     "BUY_SIGNAL_PATH_C": "C (RSI held 65 as support + 200 EMA reclaimed)",
+                    "BUY_SIGNAL_PATH_D": "D (200 EMA reclaimed + retest, against the daily trend)",
                 }
                 path = path_names[event]
                 reversal_note = " ⚠️ This reverses a recent SELL trigger - that thesis is now invalidated." if last_event_bar["reverses_sell"] else ""
+                counter_trend_note = " ⚠️ Counter-trend: price is still below the Daily 200 EMA - riskier than Paths A/B/C." if event == "BUY_SIGNAL_PATH_D" else ""
 
                 return (
-                    f"🟢 BUY signal — Path {path}. RSI {rsi}.{reversal_note}{daily_note}",
+                    f"🟢 BUY signal — Path {path}. RSI {rsi}.{reversal_note}{counter_trend_note}{daily_note}",
                     "BUY_SIGNAL",
                     levels,
                 )

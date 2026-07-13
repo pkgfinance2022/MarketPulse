@@ -384,63 +384,31 @@ def check_for_new_reversal_signals():
     render_notification_trigger(browser_entries)
 
 
-# The main Scanner tab's sidebar defaults to "Global Macro", which is
-# the exact same universe as the Global Indices tab's default "All"
-# region - without this, both tabs independently re-download the same
-# ~25 symbols on first load (visible as "Downloading market data..."
-# printing twice in a row). Cache by filter signature for a short
-# window so whichever tab asks first serves the other.
-MARKET_FETCH_TTL = 60
+GLOBAL_INDICES_REFRESH_SECONDS = 600   # faster than the universe tabs' hourly cadence (this is the "live, intraday" tab), but not so fast it re-fires the 4-engine scan pointlessly often
 
 
-def _filter_key(filters):
+def _scan_global_indices_data(sector):
+    """
+    Pure, background-thread-safe region scan - no st.* calls (mirrors
+    _scan_universe_data). Runs in a background thread via
+    universe_cache so switching regions / loading no longer blocks the
+    page for 1-2 minutes; the tab shows whatever's cached immediately
+    and swaps in the fresh scan once it completes.
+    """
 
-    return (
-        filters.get("country"),
-        filters.get("sector"),
-        filters.get("search", ""),
-        filters.get("portfolio_only", False),
-        filters.get("watchlist_only", False),
-        filters.get("priority", 1),
+    df, success, failed = DashboardLoader.load(
+        {
+            "country": "Global",
+            "sector": sector,
+            "search": "",
+            "portfolio_only": False,
+            "watchlist_only": False,
+            "priority": 1,
+        }
     )
 
-
-def _load_market_cached(filters):
-    """
-    Returns a fresh .copy() every time, never the cached object itself
-    - callers (e.g. load_global_indices) mutate their df in place
-    (adding the RSI-wave Setup labels), and without a copy that
-    mutation would leak into whichever other tab shares the same
-    cached object.
-    """
-
-    cache = st.session_state.setdefault("_market_fetch_cache", {})
-    key = _filter_key(filters)
-    cached = cache.get(key)
-
-    if cached and (time.time() - cached["ts"]) < MARKET_FETCH_TTL:
-        return cached["df"].copy(), cached["success"], cached["failed"]
-
-    df, success, failed = DashboardLoader.load(filters)
-
-    cache[key] = {"df": df, "success": success, "failed": failed, "ts": time.time()}
-
-    return df.copy(), success, failed
-
-
-def load_global_indices(sector):
-
-    with st.spinner(f"Loading {sector}..."):
-        df, success, failed = _load_market_cached(
-            {
-                "country": "Global",
-                "sector": sector,
-                "search": "",
-                "portfolio_only": False,
-                "watchlist_only": False,
-                "priority": 1,
-            }
-        )
+    wave_states = {}
+    reversal_states = {}
 
     if not df.empty:
         # ATR as a % of price - already computed, no extra fetch.
@@ -451,30 +419,14 @@ def load_global_indices(sector):
         # of an eyeballed guess.
         df["Volatility %"] = (df["ATR"] / df["Price"] * 100).replace([float("inf"), -float("inf")], None)
 
-    if not df.empty:
+        tickers = df["Ticker"].tolist()
 
-        # One extra 730d/1H fetch+walk per symbol to classify where each
-        # one sits in the RSI wave state machine right now - this is the
-        # actual screener the trend/RSI columns alone can't answer.
-        # Deliberately only done here (region load), never on the 45s
-        # auto-refresh tick, since it's ~1 yfinance call per symbol.
-        # screen_states() (not screen()) so the description text -
-        # "why" a row got that label - can also populate the scanner's
-        # detail column, not just the short label.
-        with st.spinner("Scanning RSI wave setups..."):
-            wave_states = RSIWaveStatusService.screen_states(df["Ticker"].tolist())
-
+        wave_states = RSIWaveStatusService.screen_states(tickers)
         wave_labels = {t: RSIWaveStrategy.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in wave_states.items()}
         df["Setup"] = df["Ticker"].map(wave_labels).fillna(df["Setup"])
         df["Setup Full"] = df["Ticker"].map({t: info["description"] for t, info in wave_states.items()}).fillna("")
 
-        # Second screener, same pattern - the Reversal Playbook (2
-        # fetches/symbol: 1H + Daily). Roughly doubles region load time
-        # on top of the RSI wave screener above; worth revisiting if
-        # that becomes a real problem.
-        with st.spinner("Scanning reversal playbook setups..."):
-            reversal_states = ReversalStatusService.screen_states(df["Ticker"].tolist())
-
+        reversal_states = ReversalStatusService.screen_states(tickers)
         reversal_labels = {t: ReversalPlaybook.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in reversal_states.items()}
         df["Reversal"] = df["Ticker"].map(reversal_labels).fillna(df["Reversal"])
         df["Reversal Full"] = df["Ticker"].map({t: info["description"] for t, info in reversal_states.items()}).fillna("")
@@ -497,25 +449,20 @@ def load_global_indices(sector):
         fifteen_min_labels = {}
         fifteen_min_full = {}
 
-        if confirmed_tickers:
+        for t in confirmed_tickers:
 
-            with st.spinner(f"Checking 15m readiness for {len(confirmed_tickers)} confirmed symbol(s)..."):
+            readiness = fifteen_min_readiness.check_readiness(t)
 
-                for t in confirmed_tickers:
-
-                    readiness = fifteen_min_readiness.check_readiness(t)
-
-                    if readiness:
-                        fifteen_min_labels[t] = readiness["label"]
-                        fifteen_min_full[t] = f"{readiness['label']} (15m RSI {readiness['rsi']})"
+            if readiness:
+                fifteen_min_labels[t] = readiness["label"]
+                fifteen_min_full[t] = f"{readiness['label']} (15m RSI {readiness['rsi']})"
 
         df["15m Setup"] = df["Ticker"].map(fifteen_min_labels).fillna("— (needs 1H confirm first)")
         df["15m Setup Full"] = df["Ticker"].map(fifteen_min_full).fillna("")
 
         # Third screener, same pattern - the Daily+Weekly Reversal
         # Playbook, additive alongside the 1H one above.
-        with st.spinner("Scanning Daily+Weekly reversal playbook setups..."):
-            daily_reversal_states = DailyReversalStatusService.screen_states(df["Ticker"].tolist())
+        daily_reversal_states = DailyReversalStatusService.screen_states(tickers)
 
         daily_reversal_labels = {t: DailyWeeklyReversalPlaybook.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in daily_reversal_states.items()}
         df["Daily Reversal"] = df["Ticker"].map(daily_reversal_labels).fillna("⚪ Watching")
@@ -527,24 +474,74 @@ def load_global_indices(sector):
         df["Weekly"] = df["Ticker"].map(weekly_labels).fillna("⚪ Watching")
         df["Weekly Full"] = df["Ticker"].map({t: info["weekly_description"] for t, info in daily_reversal_states.items()}).fillna("")
 
-    st.session_state.global_market = {
+    return {
         "df": df,
         "success": success,
         "failed": failed,
         "sector": sector,
+        "wave_states": wave_states,
+        "reversal_states": reversal_states,
     }
 
-    st.session_state.global_selected_ticker = (
-        df.iloc[0]["Ticker"] if not df.empty else None
+
+def _refresh_global_indices(sector):
+    """
+    Non-blocking: kicks off a background scan for this sector if the
+    cached result is stale, missing, or for a different sector, but
+    never waits for it - same pattern as _refresh_universe_body(),
+    keyed by sector since the region can change (US/India/Crypto are
+    fixed universes, this one isn't).
+    """
+
+    cache_key = f"global_{sector}"
+    cache_entry = universe_cache.get(cache_key)
+    stale = (
+        cache_entry is None
+        or (not cache_entry["loading"] and (time.time() - cache_entry["ts"]) >= GLOBAL_INDICES_REFRESH_SECONDS)
     )
 
-    # New region = new ticker set - treat the next entry-check as a
-    # fresh baseline instead of comparing against the old region's
-    # states (or notifying about everything already true on arrival).
-    st.session_state.wave_states = {}
-    st.session_state.wave_states_seeded = False
-    st.session_state.reversal_states = {}
-    st.session_state.reversal_states_seeded = False
+    if stale:
+        universe_cache.start_scan(cache_key, lambda: _scan_global_indices_data(sector))
+        cache_entry = universe_cache.get(cache_key)
+
+    if cache_entry is None or cache_entry["data"] is None:
+        st.info(f"Scanning {sector} for the first time - this takes a moment. Feel free to check other tabs meanwhile.")
+        return
+
+    seen_ts_key = "global_seen_cache_ts"
+
+    if cache_entry["ts"] > st.session_state.get(seen_ts_key, 0):
+
+        result = cache_entry["data"]
+
+        st.session_state.global_market = {
+            "df": result["df"],
+            "success": result["success"],
+            "failed": result["failed"],
+            "sector": result["sector"],
+        }
+
+        if st.session_state.global_selected_ticker not in result["df"]["Ticker"].tolist():
+            st.session_state.global_selected_ticker = result["df"].iloc[0]["Ticker"] if not result["df"].empty else None
+
+        # New data available = treat the next entry-check as a fresh
+        # baseline instead of comparing against stale states (or
+        # notifying about everything already true on arrival).
+        st.session_state.wave_states = {}
+        st.session_state.wave_states_seeded = False
+        st.session_state.reversal_states = {}
+        st.session_state.reversal_states_seeded = False
+
+        st.session_state[seen_ts_key] = cache_entry["ts"]
+
+    last_loaded = cache_entry["ts"]
+    age_minutes = round((time.time() - last_loaded) / 60)
+    refreshed_at = time.strftime("%H:%M:%S", time.localtime(last_loaded))
+
+    if cache_entry["loading"]:
+        st.caption(f"🕐 Showing data from {refreshed_at} ({age_minutes} min ago) — 🔄 a fresh scan is running in the background.")
+    else:
+        st.caption(f"🕐 Last refreshed at {refreshed_at} ({age_minutes} min ago) — refreshes automatically every {GLOBAL_INDICES_REFRESH_SECONDS // 60} min, or click Scan Now above.")
 
 
 @st.fragment(run_every=45)
@@ -559,7 +556,9 @@ def render_global_indices_live():
     market = st.session_state.global_market
 
     if market is None:
-        st.info("Pick a region and click Load to start the live view.")
+        # _refresh_global_indices() (called just before this) already
+        # shows its own "scanning for the first time" message - nothing
+        # more to add here until that first background scan lands.
         return
 
     df = DashboardLoader.refresh_intraday_prices(market["df"])
@@ -880,6 +879,8 @@ Stop = lowest 1H low since the Step 1 touch. Target = **+1.25%** (placeholder �
 
 **🔵 Path C forming:** while RSI is currently sitting in the 60-65 band (not yet re-crossed) AND price is already holding above the 1H EMA20 or EMA200, that's shown live as "Path C forming" — a heads-up that a Path C BUY could confirm on the very next bar, not just reported after it already happened.
 
+**🟡 Path D (counter-daily-trend):** the exact same touch(22) → confirm(65) → reclaim-and-retest-1H-200-EMA idea as Path B, but tracked completely separately, with **no Daily-trend filter at all**. Path B only fires when price is already above the Daily 200 EMA (a "trend-following" setup); Path D fires the *same* mechanical pattern even while price is still below the Daily 200 EMA - a genuine 1H trend change happening before the daily trend has caught up. Explicitly riskier (going against the broader daily context), so it's labeled and flagged separately rather than folded into Path B. Backtested: fires more often on instruments that spend more time below their Daily 200 EMA (e.g. oil), rarer on ones that don't.
+
 ---
 
 **📅 Daily confluence (independent of the 1H machine above)**
@@ -950,16 +951,24 @@ def render_global_indices_tab(meta):
 
     with right:
         st.write("")
-        load = st.button(
-            "🚀 Load",
+        scan_now = st.button(
+            "🔄 Scan Now",
             key="global_load",
             use_container_width=True,
         )
 
     market = st.session_state.global_market
+    region_changed = market is not None and market["sector"] != sector
 
-    if load or market is None or market["sector"] != sector:
-        load_global_indices(sector)
+    if scan_now or region_changed:
+        # Forces an immediate background scan instead of waiting for
+        # GLOBAL_INDICES_REFRESH_SECONDS to elapse - a region switch
+        # or manual click should feel responsive, not queued behind
+        # the routine refresh cadence.
+        started = universe_cache.start_scan(f"global_{sector}", lambda: _scan_global_indices_data(sector))
+        st.toast("Scanning in the background..." if started else "Already scanning in the background...", icon="🔄")
+
+    _refresh_global_indices(sector)
 
     render_global_indices_live()
     check_for_new_entries()

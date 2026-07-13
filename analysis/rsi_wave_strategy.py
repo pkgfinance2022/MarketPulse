@@ -66,11 +66,16 @@ class RSIWaveStrategy:
 
         close = df["Close"]
 
+        # RSI on OHLC4 (typical price), not raw Close - see
+        # analysis/reversal_playbook.py's _prepare_1h for the real-data
+        # case that motivated this. EMA/price levels still use Close.
+        typical_price = (df["Open"] + df["High"] + df["Low"] + close) / 4
+
         return {
             "close": close,
             "ema20": ta.trend.ema_indicator(close, window=20),
             "ema200": ta.trend.ema_indicator(close, window=200),
-            "rsi": ta.momentum.rsi(close, window=14),
+            "rsi": ta.momentum.rsi(typical_price, window=14),
         }
 
     @classmethod
