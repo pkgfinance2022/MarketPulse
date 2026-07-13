@@ -501,7 +501,7 @@ def _refresh_global_indices(sector):
     )
 
     if stale:
-        universe_cache.start_scan(cache_key, lambda: _scan_global_indices_data(sector))
+        universe_cache.start_scan(cache_key, lambda: _scan_global_indices_data(sector), pool="global")
         cache_entry = universe_cache.get(cache_key)
 
     if cache_entry is None or cache_entry["data"] is None:
@@ -1011,7 +1011,7 @@ def render_global_indices_tab(meta):
         # GLOBAL_INDICES_REFRESH_SECONDS to elapse - a region switch
         # or manual click should feel responsive, not queued behind
         # the routine refresh cadence.
-        started = universe_cache.start_scan(f"global_{sector}", lambda: _scan_global_indices_data(sector))
+        started = universe_cache.start_scan(f"global_{sector}", lambda: _scan_global_indices_data(sector), pool="global")
         st.toast("Scanning in the background..." if started else "Already scanning in the background...", icon="🔄")
 
     _refresh_global_indices(sector)

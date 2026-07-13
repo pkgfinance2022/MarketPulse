@@ -79,6 +79,7 @@ class DailyWeeklyReversalPlaybook:
     WEEKLY_SUPPORT_BAND_PCT = 1.0
     TARGET_PCT = 4.0                # wider placeholder than the 1H engine's 1.25% - Daily swings are bigger. Still explicitly for the user to tune.
     WEEKLY_CONFLUENCE_RECENT_WEEKS = 3   # how long the weekly confluence note stays "fresh"
+    STALE_RECOVERY_PTS = 5   # if RSI has moved this many points against a recent event's thesis, stop reporting it as "current" even within the recency window
 
     REJECTION_PEAK_LOOKBACK = 8   # days
 
@@ -705,6 +706,26 @@ class DailyWeeklyReversalPlaybook:
 
         last_event_bar = next((bar for bar in reversed(trace) if bar["event"]), None)
         recent = last_event_bar is not None and trace.index(last_event_bar) >= len(trace) - 3
+
+        # The bar-count window alone doesn't check whether the
+        # thesis has since weakened - a SELL trigger followed by RSI
+        # recovering several points (or a BUY signal followed by RSI
+        # dropping back) should stop being reported as the "current"
+        # state even if it's still within the last few bars. Caught
+        # via a real case: a Daily SELL_TRIGGER_REJECTION stayed
+        # "active" for 2 extra days while RSI quietly recovered +11
+        # points, contradicting what the chart actually showed.
+        if recent:
+
+            event_rsi = last_event_bar["rsi"]
+
+            if last_event_bar["event"] in ("SELL_TRIGGER_BREAKDOWN", "SELL_TRIGGER_REJECTION", "SELL_SIGNAL_CONTINUATION"):
+                if rsi > event_rsi + cls.STALE_RECOVERY_PTS:
+                    recent = False
+
+            elif last_event_bar["event"] in ("BUY_SIGNAL_PATH_A", "BUY_SIGNAL_PATH_B", "BUY_SIGNAL_PATH_C", "BUY_SIGNAL_PATH_D"):
+                if rsi < event_rsi - cls.STALE_RECOVERY_PTS:
+                    recent = False
 
         if recent:
 
