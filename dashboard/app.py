@@ -544,6 +544,41 @@ def _refresh_global_indices(sector):
         st.caption(f"🕐 Last refreshed at {refreshed_at} ({age_minutes} min ago) — refreshes automatically every {GLOBAL_INDICES_REFRESH_SECONDS // 60} min, or click Scan Now above.")
 
 
+def _vix_risk_note(df):
+    """
+    VIX's own 1H Reversal Playbook state, read as a market-wide risk
+    sentiment gauge - reuses the exact same engine already running on
+    every other symbol, no extra fetch (^VIX is just another row in
+    the Global universe). Rising VIX RSI (crossing/holding above 65)
+    typically coincides with equity weakness, so a fresh BUY signal on
+    an equity index while VIX is doing this deserves extra caution.
+    Purely informational, not a gate - explicitly for you to factor
+    into your own planning, not an automatic suppression.
+    """
+
+    vix_row = df[df["Ticker"] == "^VIX"]
+
+    if vix_row.empty:
+        return None
+
+    row = vix_row.iloc[0]
+    rsi = row.get("1H RSI")
+    reversal_label = str(row.get("Reversal", ""))
+
+    if rsi is None or pd.isna(rsi):
+        return None
+
+    rsi = round(float(rsi), 2)
+
+    if "crossed 65" in reversal_label or "Path C forming" in reversal_label or "BUY signal" in reversal_label or rsi >= 65:
+        return f"🔴 VIX Risk-OFF — VIX 1H RSI {rsi} (crossed/holding 65+) — fear rising, be extra cautious with fresh equity BUY signals right now."
+
+    if "SELL" in reversal_label or rsi <= 35:
+        return f"🟢 VIX Risk-ON — VIX 1H RSI {rsi} (falling / below 35) — fear easing, generally supportive of bullish continuation."
+
+    return None
+
+
 @st.fragment(run_every=45)
 def render_global_indices_live():
     """
@@ -565,6 +600,11 @@ def render_global_indices_live():
     st.session_state.global_market["df"] = df
 
     st.caption("🔴 Live — refreshes every 45s (scanner: 15m bars · pullback setup: 1H)")
+
+    vix_note = _vix_risk_note(df)
+
+    if vix_note:
+        st.warning(vix_note) if vix_note.startswith("🔴") else st.info(vix_note)
 
     # "Where did 65 just get crossed" - a quick at-a-glance highlight,
     # since that's often where the real move starts. Reuses the
@@ -918,6 +958,12 @@ Stop = recent swing high. Target = **-1.25%** (same placeholder, mirrored). All 
 
 **If a BUY signal fires shortly after a SELL trigger was active**, the alert explicitly flags that the sell thesis just got
 invalidated (directly answering "what if the sell call turns into a buy — that's against me").
+
+---
+
+**🌡 VIX Risk Sentiment (Global Indices only)**
+
+VIX (^VIX) runs through the exact same 1H Reversal Playbook engine as everything else - no separate logic, no extra fetch. Its RSI is read as a market-wide risk gauge: if VIX's own 1H RSI has crossed/is holding above 65 (or its Reversal state shows a BUY confirm/signal), a banner appears at the top of Global Indices flagging risk-off conditions - fear is rising, which typically coincides with equity weakness, so a fresh BUY signal elsewhere deserves extra scrutiny right then. The reverse (VIX RSI ≤35 or a SELL state) shows a risk-on banner. Purely informational - it's for your own judgment, not an automatic block on any signal.
 
 ---
 

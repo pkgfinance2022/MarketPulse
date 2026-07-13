@@ -19,6 +19,7 @@ Global,Index,US Indices,Large Cap,S&P 500,^GSPC,INDEX,5,TRUE,FALSE,TRUE,usa,
 Global,Index,US Indices,Blue Chip,Dow Jones,^DJI,INDEX,5,TRUE,FALSE,TRUE,dow,
 Global,Index,US Indices,Small Cap,Russell 2000,^RUT,INDEX,4,TRUE,FALSE,TRUE,russell,
 Global,Index,US Indices,NASDAQ 100,NASDAQ 100,^NDX,INDEX,5,TRUE,FALSE,TRUE,nasdaq100,
+Global,Index,US Indices,Volatility,VIX,^VIX,INDEX,5,TRUE,FALSE,TRUE,vix;risk-sentiment,
 
 Global,Index,European Indices,Germany,Ger 40,^GDAXI,INDEX,4,TRUE,FALSE,TRUE,europe,
 Global,Index,European Indices,United Kingdom,UK 100,^FTSE,INDEX,4,TRUE,FALSE,TRUE,europe,
