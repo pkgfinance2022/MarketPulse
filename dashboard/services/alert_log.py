@@ -58,6 +58,39 @@ class AlertLog:
         return pd.read_csv(LOG_PATH)
 
     @classmethod
+    def recently_logged(cls, ticker, direction, within_minutes=60):
+        """
+        True if this exact ticker+direction was already logged within
+        the last `within_minutes`. Backed by the shared CSV (not
+        st.session_state), so this catches duplicates across multiple
+        browser tabs/sessions and across app restarts - not just
+        within one session's own memory. Root cause of the duplicates
+        actually seen: the same real signal getting independently
+        re-detected (different sessions, or the describe() "recent
+        event" window re-triggering close to its own boundary), not
+        a genuinely new event each time.
+        """
+
+        cls._ensure()
+
+        df = cls.load()
+
+        if df.empty:
+            return False
+
+        matches = df[(df["Ticker"] == ticker) & (df["Direction"] == direction)]
+
+        if matches.empty:
+            return False
+
+        try:
+            last_logged = pd.to_datetime(matches["Timestamp"]).max()
+        except Exception:
+            return False
+
+        return (datetime.now() - last_logged).total_seconds() < within_minutes * 60
+
+    @classmethod
     def log_alert(cls, ticker, name, direction, entry_price, rsi, stop_target):
 
         cls._ensure()

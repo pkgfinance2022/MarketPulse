@@ -8,6 +8,7 @@ the engines and services, while widgets only render already-prepared data.
 import json
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -223,9 +224,18 @@ def check_for_new_entries():
 
     for entry in new_entries:
 
+        # Cross-session, cross-restart dedup - AlertLog's CSV is
+        # shared (unlike st.session_state), so this catches the same
+        # real signal getting independently re-detected by another
+        # open tab/session, or a restart resetting in-memory state,
+        # not just repeats within this one session's own memory.
+        if AlertLog.recently_logged(entry["ticker"], entry["direction"]):
+            continue
+
         icon = "🟢" if entry["direction"] == "LONG" else "🔴"
         price = round(entry["price"], 2) if entry["price"] is not None else "?"
         rsi = entry["rsi"] if entry["rsi"] is not None else "?"
+        event_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         # Computed once, reused for the message AND the log - avoids
         # a second fetch and guarantees the alert you see matches
@@ -243,7 +253,7 @@ def check_for_new_entries():
         # Name first (what an end user actually recognizes), ticker in
         # parentheses for cross-referencing elsewhere - no repeated
         # "MarketPulse" branding, no raw internal state code.
-        message = f"{icon} {entry['name']} ({entry['ticker']}) — {entry['direction']} entry\nPrice {price} · RSI {rsi}{levels}"
+        message = f"{icon} {entry['name']} ({entry['ticker']}) — {entry['direction']} entry\n{event_time}\nPrice {price} · RSI {rsi}{levels}"
 
         st.toast(f"{entry['direction']} entry: {entry['name']}", icon=icon)
 
@@ -323,9 +333,14 @@ def check_for_new_reversal_signals():
 
     for signal in new_signals:
 
+        # Cross-session, cross-restart dedup - see check_for_new_entries().
+        if AlertLog.recently_logged(signal["ticker"], signal["direction"]):
+            continue
+
         icon = "🟢" if signal["direction"] == "LONG" else "🔴"
         price = round(signal["price"], 2) if signal["price"] is not None else "?"
         signal_label = REVERSAL_SIGNAL_LABELS.get(signal["state"], signal["state"])
+        event_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         full_status = ReversalStatusService.analyse(signal["ticker"])
         stop_target = full_status["stop_target"] if full_status else None
@@ -338,7 +353,7 @@ def check_for_new_reversal_signals():
 
         message = (
             f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (Reversal Playbook)\n"
-            f"Price {price} · RSI {signal['rsi']}{levels}"
+            f"{event_time}\nPrice {price} · RSI {signal['rsi']}{levels}"
         )
 
         st.toast(f"{signal_label}: {signal['name']}", icon=icon)
@@ -1078,6 +1093,10 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states):
 
     for entry in new_entries:
 
+        # Cross-session, cross-restart dedup - see check_for_new_entries().
+        if AlertLog.recently_logged(entry["ticker"], entry["direction"]):
+            continue
+
         icon = "🟢" if entry["direction"] == "LONG" else "🔴"
 
         full_status = RSIWaveStatusService.analyse(entry["ticker"], period="730d")
@@ -1115,6 +1134,10 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states):
     )
 
     for signal in new_signals:
+
+        # Cross-session, cross-restart dedup - see check_for_new_entries().
+        if AlertLog.recently_logged(signal["ticker"], signal["direction"]):
+            continue
 
         icon = "🟢" if signal["direction"] == "LONG" else "🔴"
         signal_label = REVERSAL_SIGNAL_LABELS.get(signal["state"], signal["state"])
@@ -1450,6 +1473,7 @@ def _command_center_timeframe(base_timeframe, why_text):
     return base_timeframe
 
 
+@st.fragment(run_every=UNIVERSE_POLL_SECONDS)
 def render_command_center_tab():
     """
     Pulls together every currently-actionable row (a fresh RSI Wave
@@ -1460,27 +1484,23 @@ def render_command_center_tab():
     Reads only what's already cached in each tab's session state - no
     extra fetches - so a tab you haven't opened yet this session simply
     can't be included (flagged explicitly rather than silently omitted).
+
+    Wrapped as its own auto-refreshing fragment (same poll cadence as
+    the universe tabs) so it picks up newly-completed background scans
+    on its own - all tab bodies actually run in the same script pass
+    regardless of which one is visually selected, so the underlying
+    scans for US/India/Crypto already start the moment the app loads,
+    with no click needed; without this, Command Center itself (which
+    renders first, before those scans finish) would just sit showing
+    stale data until something forced a full rerun.
     """
 
-    header_col, button_col = st.columns([4, 1])
-
-    with header_col:
-        st.subheader("🎯 Command Center — Best Found, All Tabs")
-        st.caption(
-            "Aggregates every actionable signal already sitting in Global Indices, US Stocks, Indian Stocks, and "
-            "Crypto - reads each tab's cached scan, doesn't trigger any new fetches. Visit a tab at least once "
-            "this session for it to show up here, then use Refresh below to pick up anything scanned since."
-        )
-
-    with button_col:
-        st.write("")
-        # All tab bodies run in this same script pass, in order, with
-        # Command Center rendered FIRST - so on the very run a tab
-        # finishes its own scan, this table is already drawn and can't
-        # reflect it yet. A rerun re-reads session state from the top,
-        # by which point the other tabs' last completed scan is there.
-        if st.button("🔄 Refresh", key="command_center_refresh", use_container_width=True):
-            st.rerun()
+    st.subheader("🎯 Command Center — Best Found, All Tabs")
+    st.caption(
+        "Aggregates every actionable signal already sitting in Global Indices, US Stocks, Indian Stocks, and "
+        "Crypto - reads each tab's cached scan, doesn't trigger any new fetches. Updates itself automatically "
+        "as each tab's background scan completes - no need to visit them first."
+    )
 
     rows = []
     not_scanned = []
