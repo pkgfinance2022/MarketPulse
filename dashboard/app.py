@@ -578,6 +578,28 @@ def _refresh_global_indices(sector):
         st.caption(f"🕐 Last refreshed at {refreshed_at} ({age_minutes} min ago) — refreshes automatically every {GLOBAL_INDICES_REFRESH_SECONDS // 60} min, or click Scan Now above.")
 
 
+def _only_active_rows(df, columns):
+    """
+    Hides rows where every one of `columns` is a neutral read - "⚪
+    Watching"/"⚪ 15m not aligned yet" or the "— (needs 1H confirm
+    first)" placeholder - keeping only rows where at least one of
+    them actually found something worth looking at. A row survives if
+    ANY of the given columns is non-neutral.
+    """
+
+    available = [c for c in columns if c in df.columns]
+
+    if not available:
+        return df
+
+    mask = pd.Series(False, index=df.index)
+
+    for column in available:
+        mask = mask | ~df[column].astype(str).str.strip().str.startswith(("⚪", "—"))
+
+    return df[mask]
+
+
 def _vix_risk_note(df):
     """
     VIX's own 1H Reversal Playbook state, read as a market-wide risk
@@ -657,24 +679,43 @@ def render_global_indices_live():
     # Three separate tables instead of one wide mixed-timeframe grid -
     # each timeframe's signal(s) get their own focused view. All three
     # drive the same selected-ticker detail boxes below, whichever one
-    # you click a row in.
-    ticker_15m = Scanner.render(
-        df, default_sort="15m %", key_prefix="global_15m", compact=False,
-        columns=["Status", "Ticker", "Name", "Price", "15m %", "15m Setup"],
-        title="⏱ 15-Minute", height=350,
-    )
+    # you click a row in. Each is also pre-filtered to hide rows where
+    # nothing's been captured yet (plain Watching / not-aligned-yet /
+    # needs-1H-confirm-first) - only symbols with something active in
+    # THAT timeframe show up, instead of the full universe every time.
+    df_15m = _only_active_rows(df, ["15m Setup"])
+    df_1h = _only_active_rows(df, ["Setup", "Reversal"])
+    df_1d = _only_active_rows(df, ["Daily Reversal", "Weekly"])
 
-    ticker_1h = Scanner.render(
-        df, default_sort="Reversal", key_prefix="global_1h", compact=False,
-        columns=["Status", "Ticker", "Name", "Price", "1H %", "Setup", "Setup Timestamp", "Reversal", "Reversal Timestamp"],
-        title="🕐 Hourly", height=350,
-    )
+    if df_15m.empty:
+        st.caption("⏱ 15-Minute: nothing captured yet.")
+        ticker_15m = None
+    else:
+        ticker_15m = Scanner.render(
+            df_15m, default_sort="15m %", key_prefix="global_15m", compact=False,
+            columns=["Status", "Ticker", "Name", "Price", "15m %", "15m Setup"],
+            title="⏱ 15-Minute", height=350,
+        )
 
-    ticker_1d = Scanner.render(
-        df, default_sort="Daily Reversal", key_prefix="global_1d", compact=False,
-        columns=["Status", "Ticker", "Name", "Price", "1D %", "Daily Reversal", "Daily Reversal Timestamp", "Weekly", "Weekly Timestamp"],
-        title="📆 Daily", height=350,
-    )
+    if df_1h.empty:
+        st.caption("🕐 Hourly: nothing captured yet.")
+        ticker_1h = None
+    else:
+        ticker_1h = Scanner.render(
+            df_1h, default_sort="Reversal", key_prefix="global_1h", compact=False,
+            columns=["Status", "Ticker", "Name", "Price", "1H %", "Setup", "Setup Timestamp", "Reversal", "Reversal Timestamp"],
+            title="🕐 Hourly", height=350,
+        )
+
+    if df_1d.empty:
+        st.caption("📆 Daily: nothing captured yet.")
+        ticker_1d = None
+    else:
+        ticker_1d = Scanner.render(
+            df_1d, default_sort="Daily Reversal", key_prefix="global_1d", compact=False,
+            columns=["Status", "Ticker", "Name", "Price", "1D %", "Daily Reversal", "Daily Reversal Timestamp", "Weekly", "Weekly Timestamp"],
+            title="📆 Daily", height=350,
+        )
 
     ticker_vol = Scanner.render(
         df, default_sort="Volatility %", key_prefix="global_vol", compact=False,
