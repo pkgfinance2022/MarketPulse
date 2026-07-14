@@ -2362,7 +2362,37 @@ def render_stock_news(ticker, name):
         st.divider()
 
 
+APP_PASSWORD = "2402"
+
+
+def _require_password():
+    """
+    A simple lock screen, not real security - just enough to stop
+    anyone who stumbles on the public app URL from poking around.
+    """
+
+    if st.session_state.get("authenticated"):
+        return
+
+    st.title("🔒 MarketPulse")
+
+    with st.form("password_gate_form"):
+        entered = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Unlock")
+
+    if submitted:
+        if entered == APP_PASSWORD:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Wrong password.")
+
+    st.stop()
+
+
 def main():
+
+    _require_password()
 
     init_state()
 
