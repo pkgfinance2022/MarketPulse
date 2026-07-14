@@ -1447,25 +1447,35 @@ def render_universe_live(prefix, title):
 
     st.caption(f"{len(df)} symbols")
 
-    # Three separate tables instead of one wide mixed-timeframe grid -
-    # 15m doesn't help for stocks/crypto you don't trade intraday, so
-    # Hourly/Daily/Weekly instead of Global Indices' 15m/Hourly/Daily.
-    # All three drive the same selected-ticker detail boxes below. Each
-    # is pre-filtered to hide rows with nothing captured yet (plain
-    # Watching across the board), same as Global Indices.
-    df_1h = _only_active_rows(df, ["Setup", "Reversal"])
+    # Hourly is Crypto-only here - US/India stocks aren't traded
+    # intraday, so that table (and the two 1H-based detail boxes
+    # further below) would just be noise for those two.
+    show_hourly = prefix not in ("us", "india")
+
+    # Two (Crypto) or three (US/India) separate tables instead of one
+    # wide mixed-timeframe grid - 15m doesn't help for stocks/crypto
+    # you don't trade intraday, so Hourly/Daily/Weekly instead of
+    # Global Indices' 15m/Hourly/Daily. All drive the same
+    # selected-ticker detail boxes below. Each is pre-filtered to hide
+    # rows with nothing captured yet (plain Watching across the
+    # board), same as Global Indices.
     df_1d = _only_active_rows(df, ["Daily Reversal"])
     df_1w = _only_active_rows(df, ["Weekly"])
 
-    if df_1h.empty:
-        st.caption("🕐 Hourly: nothing captured yet.")
-        ticker_1h = None
-    else:
-        ticker_1h = Scanner.render(
-            df_1h, default_sort="Reversal", key_prefix=f"{prefix}_1h", compact=False,
-            columns=["Status", "Ticker", "Name", "Price", "1H %", "Setup", "Setup Timestamp", "Reversal", "Reversal Timestamp"],
-            title="🕐 Hourly", height=350,
-        )
+    ticker_1h = None
+
+    if show_hourly:
+
+        df_1h = _only_active_rows(df, ["Setup", "Reversal"])
+
+        if df_1h.empty:
+            st.caption("🕐 Hourly: nothing captured yet.")
+        else:
+            ticker_1h = Scanner.render(
+                df_1h, default_sort="Reversal", key_prefix=f"{prefix}_1h", compact=False,
+                columns=["Status", "Ticker", "Name", "Price", "1H %", "Setup", "Setup Timestamp", "Reversal", "Reversal Timestamp"],
+                title="🕐 Hourly", height=350,
+            )
 
     if df_1d.empty:
         st.caption("📆 Daily: nothing captured yet.")
@@ -1487,10 +1497,12 @@ def render_universe_live(prefix, title):
             title="🗓 Weekly", height=350,
         )
 
-    ticker = _resolve_clicked_ticker(
-        prefix,
-        {"1h": ticker_1h, "1d": ticker_1d, "1w": ticker_1w},
-    )
+    selections = {"1d": ticker_1d, "1w": ticker_1w}
+
+    if show_hourly:
+        selections["1h"] = ticker_1h
+
+    ticker = _resolve_clicked_ticker(prefix, selections)
 
     if ticker:
         st.session_state[f"{prefix}_selected_ticker"] = ticker
@@ -1505,7 +1517,7 @@ def render_universe_live(prefix, title):
     header_col, link_col = st.columns([4, 1])
 
     with header_col:
-        st.subheader(f"📈 {selected} — RSI Wave Setup (1H)")
+        st.subheader(f"📈 {selected} — RSI Wave Setup (1H)" if show_hourly else f"📈 {selected}")
 
     with link_col:
         st.link_button(
@@ -1514,69 +1526,72 @@ def render_universe_live(prefix, title):
             use_container_width=True,
         )
 
-    status = RSIWaveStatusService.analyse(selected, period="730d")
+    if show_hourly:
 
-    if status is None:
-        st.info("Not enough 1H history to evaluate this instrument yet.")
-    else:
-        st.info(status["description"])
+        status = RSIWaveStatusService.analyse(selected, period="730d")
 
-    if status and status["direction"] and status["stop_target"]:
+        if status is None:
+            st.info("Not enough 1H history to evaluate this instrument yet.")
+        else:
+            st.info(status["description"])
 
-        st_target = status["stop_target"]
+        if status and status["direction"] and status["stop_target"]:
 
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Direction", status["direction"])
-        c2.metric("Entry", round(status["price"], 2))
-        c3.metric("Stop", st_target["stop"])
-        c4.metric("Target 1", st_target["target1"])
-        c5.metric("Risk:Reward", f"1:{st_target['risk_reward']}")
+            st_target = status["stop_target"]
 
-        notes = st.text_input("Notes (optional)", key=f"{prefix}_park_notes_{selected}")
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Direction", status["direction"])
+            c2.metric("Entry", round(status["price"], 2))
+            c3.metric("Stop", st_target["stop"])
+            c4.metric("Target 1", st_target["target1"])
+            c5.metric("Risk:Reward", f"1:{st_target['risk_reward']}")
 
-        if st.button("📌 Park this trade", key=f"{prefix}_park_btn_{selected}"):
+            notes = st.text_input("Notes (optional)", key=f"{prefix}_park_notes_{selected}")
 
-            TradeJournal.park(
-                selected, status["direction"], round(status["price"], 2), st_target, status["state"], status["rsi"], notes=notes,
-            )
+            if st.button("📌 Park this trade", key=f"{prefix}_park_btn_{selected}"):
 
-            st.success(f"Parked {status['direction']} {selected} @ {round(status['price'], 2)}")
+                TradeJournal.park(
+                    selected, status["direction"], round(status["price"], 2), st_target, status["state"], status["rsi"], notes=notes,
+                )
 
-    st.divider()
-    st.subheader(f"🔀 {selected} — Reversal Playbook (1H + Daily)")
+                st.success(f"Parked {status['direction']} {selected} @ {round(status['price'], 2)}")
 
-    reversal = ReversalStatusService.analyse(selected)
+        st.divider()
+        st.subheader(f"🔀 {selected} — Reversal Playbook (1H + Daily)")
 
-    if reversal is None:
-        st.info("Not enough 1H+Daily history to evaluate this instrument yet.")
-    else:
-        st.info(reversal["description"])
+        reversal = ReversalStatusService.analyse(selected)
 
-    if reversal and reversal["direction"] and reversal["stop_target"] and reversal["stop_target"]["stop"] is not None:
+        if reversal is None:
+            st.info("Not enough 1H+Daily history to evaluate this instrument yet.")
+        else:
+            st.info(reversal["description"])
 
-        r_target = reversal["stop_target"]
+        if reversal and reversal["direction"] and reversal["stop_target"] and reversal["stop_target"]["stop"] is not None:
 
-        cols = st.columns(5)
-        cols[0].metric("Direction", reversal["direction"])
-        cols[1].metric("Entry", reversal["price"])
-        cols[2].metric("Stop", r_target["stop"])
-        cols[3].metric("Target", r_target["target1"])
-        cols[4].metric("Risk:Reward", f"1:{r_target['risk_reward']}")
+            r_target = reversal["stop_target"]
 
-        reversal_notes = st.text_input("Notes (optional)", key=f"{prefix}_reversal_notes_{selected}")
+            cols = st.columns(5)
+            cols[0].metric("Direction", reversal["direction"])
+            cols[1].metric("Entry", reversal["price"])
+            cols[2].metric("Stop", r_target["stop"])
+            cols[3].metric("Target", r_target["target1"])
+            cols[4].metric("Risk:Reward", f"1:{r_target['risk_reward']}")
 
-        if st.button("📌 Park this trade", key=f"{prefix}_reversal_park_btn_{selected}"):
+            reversal_notes = st.text_input("Notes (optional)", key=f"{prefix}_reversal_notes_{selected}")
 
-            TradeJournal.park(
-                selected, reversal["direction"], reversal["price"], r_target, reversal["state"], reversal["rsi"], notes=reversal_notes,
-            )
+            if st.button("📌 Park this trade", key=f"{prefix}_reversal_park_btn_{selected}"):
 
-            st.success(f"Parked {reversal['direction']} {selected} @ {reversal['price']}")
+                TradeJournal.park(
+                    selected, reversal["direction"], reversal["price"], r_target, reversal["state"], reversal["rsi"], notes=reversal_notes,
+                )
 
-    # A separate Daily+Weekly read (analysis/reversal_playbook_daily.py)
-    # alongside the two 1H-based boxes above - additive everywhere,
-    # not a replacement for the hourly view.
-    st.divider()
+                st.success(f"Parked {reversal['direction']} {selected} @ {reversal['price']}")
+
+        st.divider()
+
+    # A separate Daily+Weekly read (analysis/reversal_playbook_daily.py) -
+    # for US/India, this is now the primary (only) technical read here
+    # since the 1H boxes above are Crypto-only.
     st.subheader(f"📆 {selected} — Reversal Playbook (Daily + Weekly)")
 
     daily_reversal = DailyReversalStatusService.analyse(selected)
