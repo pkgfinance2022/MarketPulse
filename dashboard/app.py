@@ -56,6 +56,42 @@ UNIVERSE_TABS = [
 UNIVERSE_REFRESH_SECONDS = 3600   # full stock/crypto universes are much bigger than Global Indices - a slow, once-an-hour cadence keeps yfinance usage sane (explicitly requested)
 
 
+def _format_duration(seconds):
+    """"2m 30s" / "45s" - human, not "0:02:30"."""
+
+    seconds = max(0, int(seconds))
+    minutes, secs = divmod(seconds, 60)
+
+    if minutes:
+        return f"{minutes}m {secs}s" if secs else f"{minutes}m"
+
+    return f"{secs}s"
+
+
+def _scan_eta_text(cache_entry):
+    """
+    A practical, best-guess ETA for a scan currently in progress -
+    based on how long the LAST successful scan for this exact prefix
+    actually took (a universe's size doesn't change run to run, so its
+    own history is a far better estimate than a generic one-size-fits-
+    all guess). Falls back to a rough range on the very first-ever
+    scan for a prefix, when there's no history yet to go on.
+    """
+
+    last_duration = cache_entry.get("last_duration") if cache_entry else None
+    loading_since = cache_entry.get("loading_since") if cache_entry else None
+
+    if not last_duration or not loading_since:
+        return "no estimate yet - typically 1-4 minutes depending on the universe size"
+
+    remaining = last_duration - (time.time() - loading_since)
+
+    if remaining <= 0:
+        return "should finish any moment now"
+
+    return f"~{_format_duration(remaining)} remaining (based on the last scan)"
+
+
 def _format_event_time(ts):
     """
     Formats an engine's event_time into a display string for the
@@ -539,7 +575,8 @@ def _refresh_global_indices(sector):
         cache_entry = universe_cache.get(cache_key)
 
     if cache_entry is None or cache_entry["data"] is None:
-        st.info(f"Scanning {sector} for the first time - this takes a moment. Feel free to check other tabs meanwhile.")
+        eta = _scan_eta_text(cache_entry) if cache_entry else "no estimate yet - typically 1-4 minutes depending on the universe size"
+        st.info(f"Scanning {sector} for the first time — {eta}. Feel free to check other tabs meanwhile.")
         return
 
     seen_ts_key = "global_seen_cache_ts"
@@ -573,7 +610,7 @@ def _refresh_global_indices(sector):
     refreshed_at = time_utils.unix_to_cet(last_loaded).strftime("%H:%M:%S CET")
 
     if cache_entry["loading"]:
-        st.caption(f"🕐 Showing data from {refreshed_at} ({age_minutes} min ago) — 🔄 a fresh scan is running in the background.")
+        st.caption(f"🕐 Showing data from {refreshed_at} ({age_minutes} min ago) — 🔄 a fresh scan is running in the background, {_scan_eta_text(cache_entry)}.")
     else:
         st.caption(f"🕐 Last refreshed at {refreshed_at} ({age_minutes} min ago) — refreshes automatically every {GLOBAL_INDICES_REFRESH_SECONDS // 60} min, or click Scan Now above.")
 
@@ -1444,8 +1481,9 @@ def _refresh_universe_body(prefix, country):
         cache_entry = universe_cache.get(prefix)
 
     if cache_entry is None or cache_entry["data"] is None:
+        eta = _scan_eta_text(cache_entry) if cache_entry else "no estimate yet - typically 1-4 minutes depending on the universe size"
         st.info(
-            f"Scanning {country} for the first time - large universes can take a few minutes. "
+            f"Scanning {country} for the first time — {eta}. "
             "Feel free to check other tabs meanwhile; this keeps running in the background."
         )
         return
@@ -1481,7 +1519,7 @@ def _refresh_universe_body(prefix, country):
     refreshed_at = time_utils.unix_to_cet(last_loaded).strftime("%H:%M:%S CET")
 
     if cache_entry["loading"]:
-        st.caption(f"🕐 Showing data from {refreshed_at} ({age_minutes} min ago) — 🔄 a fresh scan is running in the background and will swap in automatically once done.")
+        st.caption(f"🕐 Showing data from {refreshed_at} ({age_minutes} min ago) — 🔄 a fresh scan is running in the background, {_scan_eta_text(cache_entry)}, and will swap in automatically once done.")
     else:
         st.caption(f"🕐 Last refreshed at {refreshed_at} ({age_minutes} min ago) — refreshes automatically every hour, or click Scan Now above.")
 

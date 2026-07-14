@@ -41,6 +41,13 @@ _lock = threading.Lock()
 _cache = {}
 _scan_semaphores = defaultdict(lambda: threading.Semaphore(1))
 
+# Kept separate from _cache (and NOT wiped by force_clear_all/
+# force_clear) - a scan's own past duration is the best available
+# estimate for "how long will this one take", and that's most useful
+# right after a forced full reset, when there's otherwise no
+# in-progress timing data at all yet.
+_last_durations = {}
+
 # A real scan (US/India/Crypto's full universe, or Global Indices)
 # has always finished in well under 3 minutes in practice.
 # STUCK_WARNING_SECONDS is when the UI starts offering a manual
@@ -56,11 +63,27 @@ MAX_SCAN_SECONDS = 600
 
 
 def get(prefix):
-    """Returns {"data":, "ts":, "loading":} for this prefix, or None if no scan has ever completed or started."""
+    """
+    Returns {"data":, "ts":, "loading":, "loading_since":,
+    "last_duration":} for this prefix, or None if no scan has ever
+    completed or started. "last_duration" (seconds) is how long the
+    most recent successful scan actually took - callers use it to
+    show a practical "~X remaining" estimate for the current one,
+    since a given universe's size doesn't change run to run. Survives
+    force_clear_all()/force_clear(), so it's still available as an
+    estimate right after a forced reset.
+    """
 
     with _lock:
         entry = _cache.get(prefix)
-        return dict(entry) if entry else None
+
+        if not entry:
+            return None
+
+        result = dict(entry)
+        result["last_duration"] = _last_durations.get(prefix)
+
+        return result
 
 
 def force_clear_all():
@@ -120,8 +143,9 @@ def start_scan(prefix, scan_fn, pool="universe"):
         if entry["loading"] and not stuck:
             return False
 
+        started_at = time.time()
         entry["loading"] = True
-        entry["loading_since"] = time.time()
+        entry["loading_since"] = started_at
 
     def _worker():
 
@@ -129,9 +153,11 @@ def start_scan(prefix, scan_fn, pool="universe"):
 
             try:
                 result = scan_fn()
+                completed_at = time.time()
 
                 with _lock:
-                    _cache[prefix] = {"data": result, "ts": time.time(), "loading": False, "loading_since": None}
+                    _cache[prefix] = {"data": result, "ts": completed_at, "loading": False, "loading_since": None}
+                    _last_durations[prefix] = completed_at - started_at
 
             except Exception:
                 with _lock:
