@@ -1214,6 +1214,7 @@ def render_open_positions():
     df = Positions.evaluate()
 
     open_df = df[df["Status"] == "OPEN"] if not df.empty else df
+    open_df = open_df.sort_values("OpenedAt", ascending=False)
 
     if open_df.empty:
         st.caption("No open positions. Log one above to start following it.")
