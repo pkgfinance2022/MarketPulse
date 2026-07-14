@@ -42,14 +42,17 @@ _cache = {}
 _scan_semaphores = defaultdict(lambda: threading.Semaphore(1))
 
 # A real scan (US/India/Crypto's full universe, or Global Indices)
-# has always finished in well under 5 minutes in practice. If a
-# background thread is still marked "loading" past this, something's
-# genuinely stuck (a hung network call yfinance's own default timeout
-# didn't catch, or a retry storm) rather than just being slow - treat
-# it as abandoned so a fresh scan can take over instead of the tab
-# being stuck showing "a fresh scan is running" forever with no way
-# to recover short of restarting the whole app.
-MAX_SCAN_SECONDS = 900
+# has always finished in well under 3 minutes in practice.
+# STUCK_WARNING_SECONDS is when the UI starts offering a manual
+# "force restart" (see app.py's _render_scan_now_button) - well past
+# normal, but not yet auto-healed. MAX_SCAN_SECONDS is the automatic
+# ceiling: past this, start_scan() itself treats a "loading" entry as
+# abandoned (a hung network call yfinance's own timeout didn't catch,
+# or a retry storm) and lets a fresh scan take over even without the
+# user manually forcing it - either way, no more needing to restart
+# the whole app just to get a tab unstuck.
+STUCK_WARNING_SECONDS = 180
+MAX_SCAN_SECONDS = 600
 
 
 def get(prefix):
@@ -58,6 +61,41 @@ def get(prefix):
     with _lock:
         entry = _cache.get(prefix)
         return dict(entry) if entry else None
+
+
+def force_clear_all():
+    """
+    Wipes the ENTIRE cache - every tab's next refresh check sees no
+    cached entry at all (same as a brand-new process) and kicks off a
+    fresh scan on its own, since every tab's existing "stale" check
+    already treats a missing cache entry as "scan now". This is the
+    "refresh everything, like a reboot" button - it resets the data
+    layer this module owns without needing to actually restart the
+    Streamlit process.
+    """
+
+    with _lock:
+        _cache.clear()
+
+
+def force_clear(prefix):
+    """
+    Immediately clears a prefix's "loading" flag, regardless of how
+    long it's been running - lets a user manually recover a stuck scan
+    right now instead of waiting out MAX_SCAN_SECONDS (or restarting
+    the whole app, which was previously the only way out). Safe to
+    call even if the scan isn't actually stuck: the abandoned
+    background thread (if any) is still running and will just
+    overwrite the cache with its own result whenever it eventually
+    finishes or errors, same as any other stale/duplicate scan.
+    """
+
+    with _lock:
+        entry = _cache.get(prefix)
+
+        if entry:
+            entry["loading"] = False
+            entry["loading_since"] = None
 
 
 def start_scan(prefix, scan_fn, pool="universe"):

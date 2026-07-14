@@ -1709,20 +1709,43 @@ def render_universe_live(prefix, title):
             st.success(f"Parked {daily_reversal['direction']} {selected} @ {daily_reversal['price']}")
 
 
-@st.fragment
+@st.fragment(run_every=30)
 def _render_scan_now_button(prefix, country):
     """
-    Its own fragment (no run_every - only reruns when its own button
-    is clicked) so clicking Scan Now only reruns this small button
-    widget, not the entire script. Without this, the button lived
+    Its own fragment so clicking Scan Now only reruns this small
+    button widget, not the entire script - the button used to live
     directly in the top-level tab body, so clicking it triggered a
-    full-page rerun - Streamlit dims/overlays the WHOLE app (every
+    full-page rerun, and Streamlit dims/overlays the WHOLE app (every
     tab, not just this one) while a full rerun is in flight, which
     read as "the other tabs went blurry/read-only" even though
-    nothing about them actually changed.
+    nothing about them actually changed. The 30s timer here just keeps
+    the "stuck?" check below fresh without needing a click first.
+
+    If the current scan has been "loading" for a while, offers a
+    manual force-restart instead of the normal button - previously the
+    only way to recover a genuinely stuck scan (e.g. a hung network
+    call) was to reboot the whole app; now a click here clears it and
+    starts fresh immediately, without waiting out
+    universe_cache.MAX_SCAN_SECONDS's automatic ceiling either.
     """
 
-    if st.button("🔄 Scan Now", key=f"{prefix}_manual_scan", use_container_width=True):
+    entry = universe_cache.get(prefix)
+    stuck_for = (
+        time.time() - entry["loading_since"]
+        if entry and entry["loading"] and entry.get("loading_since")
+        else 0
+    )
+
+    if stuck_for > universe_cache.STUCK_WARNING_SECONDS:
+
+        st.caption(f"⚠️ Stuck for {int(stuck_for // 60)}+ min")
+
+        if st.button("⚠️ Force Restart", key=f"{prefix}_force_restart", use_container_width=True):
+            universe_cache.force_clear(prefix)
+            universe_cache.start_scan(prefix, lambda: _scan_universe_data(country), pool=prefix)
+            st.toast("Cleared the stuck scan and started a fresh one...", icon="⚠️")
+
+    elif st.button("🔄 Scan Now", key=f"{prefix}_manual_scan", use_container_width=True):
         started = universe_cache.start_scan(prefix, lambda: _scan_universe_data(country), pool=prefix)
         st.toast("Scan started in the background..." if started else "Already scanning in the background...", icon="🔄")
 
@@ -2123,6 +2146,20 @@ def main():
 
     Header.render()
     MarketStatus.render()
+
+    refresh_col, _ = st.columns([1, 5])
+
+    with refresh_col:
+        # A deliberate full-page rerun (not fragment-scoped, unlike the
+        # per-tab Scan Now buttons) - wiping the cache only helps if
+        # every tab's own refresh check actually runs and notices it's
+        # gone, and that needs this script pass to reach every tab's
+        # body, not just this button's own corner of the page. Same
+        # end result as rebooting the whole app (every tab starts
+        # pulling fresh data), without needing an actual restart.
+        if st.button("🔄 Refresh Everything", use_container_width=True, key="refresh_everything_btn"):
+            universe_cache.force_clear_all()
+            st.toast("Cleared every cached scan - all tabs are starting fresh pulls now.", icon="🔄")
 
     # Command Center first - a cross-tab summary of what's already been
     # scanned. Global Indices second so it's still the first *live*
