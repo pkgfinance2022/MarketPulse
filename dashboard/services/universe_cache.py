@@ -41,6 +41,16 @@ _lock = threading.Lock()
 _cache = {}
 _scan_semaphores = defaultdict(lambda: threading.Semaphore(1))
 
+# A real scan (US/India/Crypto's full universe, or Global Indices)
+# has always finished in well under 5 minutes in practice. If a
+# background thread is still marked "loading" past this, something's
+# genuinely stuck (a hung network call yfinance's own default timeout
+# didn't catch, or a retry storm) rather than just being slow - treat
+# it as abandoned so a fresh scan can take over instead of the tab
+# being stuck showing "a fresh scan is running" forever with no way
+# to recover short of restarting the whole app.
+MAX_SCAN_SECONDS = 900
+
 
 def get(prefix):
     """Returns {"data":, "ts":, "loading":} for this prefix, or None if no scan has ever completed or started."""
@@ -59,18 +69,21 @@ def start_scan(prefix, scan_fn, pool="universe"):
 
     `pool` picks which semaphore this scan competes for - prefixes in
     the same pool are serialized against each other, but different
-    pools run fully independently. Global Indices should always pass
-    a pool of its own (e.g. "global") so it's never queued behind the
-    much bigger US/India/Crypto scans (the default "universe" pool).
+    pools run fully independently. Every tab should pass a pool of its
+    own (e.g. "global", or the tab's own prefix) so one tab's scan is
+    never queued behind - or stuck waiting on - a different tab's.
     """
 
     with _lock:
-        entry = _cache.setdefault(prefix, {"data": None, "ts": 0, "loading": False})
+        entry = _cache.setdefault(prefix, {"data": None, "ts": 0, "loading": False, "loading_since": None})
 
-        if entry["loading"]:
+        stuck = entry["loading"] and entry.get("loading_since") and (time.time() - entry["loading_since"]) > MAX_SCAN_SECONDS
+
+        if entry["loading"] and not stuck:
             return False
 
         entry["loading"] = True
+        entry["loading_since"] = time.time()
 
     def _worker():
 
@@ -80,11 +93,12 @@ def start_scan(prefix, scan_fn, pool="universe"):
                 result = scan_fn()
 
                 with _lock:
-                    _cache[prefix] = {"data": result, "ts": time.time(), "loading": False}
+                    _cache[prefix] = {"data": result, "ts": time.time(), "loading": False, "loading_since": None}
 
             except Exception:
                 with _lock:
                     _cache[prefix]["loading"] = False
+                    _cache[prefix]["loading_since"] = None
 
     threading.Thread(target=_worker, daemon=True).start()
 

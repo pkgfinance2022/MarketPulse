@@ -1440,7 +1440,7 @@ def _refresh_universe_body(prefix, country):
     )
 
     if stale:
-        universe_cache.start_scan(prefix, lambda: _scan_universe_data(country))
+        universe_cache.start_scan(prefix, lambda: _scan_universe_data(country), pool=prefix)
         cache_entry = universe_cache.get(prefix)
 
     if cache_entry is None or cache_entry["data"] is None:
@@ -1709,6 +1709,24 @@ def render_universe_live(prefix, title):
             st.success(f"Parked {daily_reversal['direction']} {selected} @ {daily_reversal['price']}")
 
 
+@st.fragment
+def _render_scan_now_button(prefix, country):
+    """
+    Its own fragment (no run_every - only reruns when its own button
+    is clicked) so clicking Scan Now only reruns this small button
+    widget, not the entire script. Without this, the button lived
+    directly in the top-level tab body, so clicking it triggered a
+    full-page rerun - Streamlit dims/overlays the WHOLE app (every
+    tab, not just this one) while a full rerun is in flight, which
+    read as "the other tabs went blurry/read-only" even though
+    nothing about them actually changed.
+    """
+
+    if st.button("🔄 Scan Now", key=f"{prefix}_manual_scan", use_container_width=True):
+        started = universe_cache.start_scan(prefix, lambda: _scan_universe_data(country), pool=prefix)
+        st.toast("Scan started in the background..." if started else "Already scanning in the background...", icon="🔄")
+
+
 def render_universe_tab(prefix, country, title):
 
     _ensure_universe_state(prefix)
@@ -1725,9 +1743,7 @@ def render_universe_tab(prefix, country, title):
 
     with button_col:
         st.write("")
-        if st.button("🔄 Scan Now", key=f"{prefix}_manual_scan", use_container_width=True):
-            started = universe_cache.start_scan(prefix, lambda: _scan_universe_data(country))
-            st.toast("Scan started in the background..." if started else "Already scanning in the background...", icon="🔄")
+        _render_scan_now_button(prefix, country)
 
     UNIVERSE_REFRESH_FRAGMENTS[prefix]()
     render_universe_live(prefix, title)
@@ -1748,6 +1764,14 @@ COMMAND_CENTER_COLUMNS = [
     ("Daily Reversal", "Daily Reversal Full", "Daily", ("signal", "trigger", "continuation")),
 ]
 
+# US/India aren't traded intraday (see render_universe_live's
+# show_hourly gate) - their dataframes still carry Setup/Reversal
+# columns internally (the underlying scan still computes them), so
+# Command Center has to explicitly exclude those two sources for
+# Hourly-based rows rather than just checking column presence.
+COMMAND_CENTER_HOURLY_SOURCES = [
+    (label, key) for label, key in COMMAND_CENTER_SOURCES if key not in ("us_market", "india_market")
+]
 
 # Mirrors the exact column sets each per-tab timeframe table already
 # renders (Global Indices / US / India / Crypto) - (display column,
@@ -1760,27 +1784,27 @@ COMMAND_CENTER_TIMEFRAME_TABLES = [
     ("🕐 Hourly", "cc_hourly", [
         ("Setup", "Setup Full", "Setup Timestamp"),
         ("Reversal", "Reversal Full", "Reversal Timestamp"),
-    ]),
+    ], COMMAND_CENTER_HOURLY_SOURCES),
     ("📆 Daily", "cc_daily", [
         ("Daily Reversal", "Daily Reversal Full", "Daily Reversal Timestamp"),
-    ]),
+    ], COMMAND_CENTER_SOURCES),
     ("🗓 Weekly", "cc_weekly", [
         ("Weekly", "Weekly Full", "Weekly Timestamp"),
-    ]),
+    ], COMMAND_CENTER_SOURCES),
 ]
 
 
-def _build_command_center_timeframe_df(signal_columns):
+def _build_command_center_timeframe_df(signal_columns, sources):
     """
-    Combines the given signal columns across every scanned universe
-    into one dataframe, keeping only rows where at least one of those
+    Combines the given signal columns across the given sources into
+    one dataframe, keeping only rows where at least one of those
     columns is more than a plain "Watching" read - reads cached
     session state only, same as the combined table above.
     """
 
     rows = []
 
-    for label, session_key in COMMAND_CENTER_SOURCES:
+    for label, session_key in sources:
 
         market = st.session_state.get(session_key)
 
@@ -1892,6 +1916,13 @@ def render_command_center_tab():
             if column not in df.columns:
                 continue
 
+            # US/India don't get an Hourly view anywhere else in the
+            # app (not traded intraday) - skip their Hourly-sourced
+            # rows here too, even though the underlying columns still
+            # exist in their scanned dataframe.
+            if base_timeframe == "Hourly" and session_key in ("us_market", "india_market"):
+                continue
+
             mask = df[column].astype(str).str.lower().str.contains("|".join(keywords))
 
             for _, row in df[mask].iterrows():
@@ -1936,9 +1967,9 @@ def render_command_center_tab():
         "grouped by timeframe so it's all in one place instead of tab by tab."
     )
 
-    for title, key_prefix, signal_columns in COMMAND_CENTER_TIMEFRAME_TABLES:
+    for title, key_prefix, signal_columns, sources in COMMAND_CENTER_TIMEFRAME_TABLES:
 
-        table_df = _build_command_center_timeframe_df(signal_columns)
+        table_df = _build_command_center_timeframe_df(signal_columns, sources)
 
         if table_df.empty:
             st.caption(f"{title}: nothing beyond Watching right now.")
