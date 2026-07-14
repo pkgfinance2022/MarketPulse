@@ -88,17 +88,28 @@ def get(prefix):
 
 def force_clear_all():
     """
-    Wipes the ENTIRE cache - every tab's next refresh check sees no
-    cached entry at all (same as a brand-new process) and kicks off a
-    fresh scan on its own, since every tab's existing "stale" check
-    already treats a missing cache entry as "scan now". This is the
-    "refresh everything, like a reboot" button - it resets the data
-    layer this module owns without needing to actually restart the
-    Streamlit process.
+    Marks every prefix that ISN'T currently mid-scan as stale, so each
+    tab's next refresh check kicks off a fresh scan on its own - the
+    "refresh everything, like a reboot" button.
+
+    Deliberately leaves any prefix that's already loading untouched,
+    rather than wiping it too: clicking this while a scan is still
+    in-flight (a large universe genuinely takes a few minutes) used to
+    wipe its "loading" flag along with everything else, so a second
+    click - or the fragment's own poll tick - would see a missing
+    entry and start ANOTHER full scan on top of the one still
+    running, with no limit on how many could pile up. That's exactly
+    what caused a segfault in production: repeated clicks stacked up
+    dozens of concurrent full-universe scans until the container ran
+    out of threads/sockets. Leaving in-flight entries alone makes this
+    safe to click any number of times - it can only ever add work for
+    prefixes that are actually idle.
     """
 
     with _lock:
-        _cache.clear()
+        for entry in _cache.values():
+            if not entry["loading"]:
+                entry["ts"] = 0
 
 
 def force_clear(prefix):
