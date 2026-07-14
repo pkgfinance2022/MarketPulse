@@ -59,8 +59,10 @@ UNIVERSE_REFRESH_SECONDS = 3600   # full stock/crypto universes are much bigger 
 def _format_event_time(ts):
     """
     Formats an engine's event_time into a display string for the
-    scanner's Timestamp columns. Hourly/15m bars carry a real time of
-    day, always converted to CET/CEST so events from different
+    scanner's Timestamp columns. Rounded to the hour deliberately (no
+    minutes) - "3 PM" is plenty precise for "when did you see this",
+    and it's what was actually asked for. Hourly/15m bars carry a real
+    time of day, always converted to CET/CEST so events from different
     exchanges (each with their own tz from yfinance) read on one
     shared clock instead of a different one per row. Daily/Weekly bars
     carry a midnight exchange-local timestamp that only identifies
@@ -75,9 +77,13 @@ def _format_event_time(ts):
     ts = pd.Timestamp(ts)
 
     if ts.hour == 0 and ts.minute == 0:
-        return ts.strftime("%Y-%m-%d")
+        return ts.strftime("%b %d")
 
-    return time_utils.to_cet(ts).strftime("%Y-%m-%d %H:%M CET")
+    ts = time_utils.to_cet(ts)
+    hour12 = ts.hour % 12 or 12
+    ampm = "AM" if ts.hour < 12 else "PM"
+
+    return f"{ts.strftime('%b %d')}, {hour12} {ampm} CET"
 
 
 def init_state():
@@ -660,7 +666,7 @@ def render_global_indices_live():
 
     ticker_1h = Scanner.render(
         df, default_sort="Reversal", key_prefix="global_1h", compact=False,
-        columns=["Status", "Ticker", "Name", "Price", "1H %", "Setup", "Reversal", "Reversal Timestamp"],
+        columns=["Status", "Ticker", "Name", "Price", "1H %", "Setup", "Setup Timestamp", "Reversal", "Reversal Timestamp"],
         title="🕐 Hourly", height=350,
     )
 
@@ -1367,7 +1373,7 @@ def render_universe_live(prefix, title):
     # All three drive the same selected-ticker detail boxes below.
     ticker_1h = Scanner.render(
         df, default_sort="Reversal", key_prefix=f"{prefix}_1h", compact=False,
-        columns=["Status", "Ticker", "Name", "Price", "1H %", "Setup", "Reversal", "Reversal Timestamp"],
+        columns=["Status", "Ticker", "Name", "Price", "1H %", "Setup", "Setup Timestamp", "Reversal", "Reversal Timestamp"],
         title="🕐 Hourly", height=350,
     )
 
@@ -1542,6 +1548,78 @@ COMMAND_CENTER_COLUMNS = [
 ]
 
 
+# Mirrors the exact column sets each per-tab timeframe table already
+# renders (Global Indices / US / India / Crypto) - (display column,
+# full-text column, timestamp column). A row is pulled in if ANY of a
+# table's signal columns isn't a plain "Watching" read, so this
+# surfaces everything already-found-interesting (Path C forming,
+# multi-try breakouts, alerts - not just the narrower "act now" set
+# the combined table above filters to).
+COMMAND_CENTER_TIMEFRAME_TABLES = [
+    ("🕐 Hourly", "cc_hourly", [
+        ("Setup", "Setup Full", "Setup Timestamp"),
+        ("Reversal", "Reversal Full", "Reversal Timestamp"),
+    ]),
+    ("📆 Daily", "cc_daily", [
+        ("Daily Reversal", "Daily Reversal Full", "Daily Reversal Timestamp"),
+    ]),
+    ("🗓 Weekly", "cc_weekly", [
+        ("Weekly", "Weekly Full", "Weekly Timestamp"),
+    ]),
+]
+
+
+def _build_command_center_timeframe_df(signal_columns):
+    """
+    Combines the given signal columns across every scanned universe
+    into one dataframe, keeping only rows where at least one of those
+    columns is more than a plain "Watching" read - reads cached
+    session state only, same as the combined table above.
+    """
+
+    rows = []
+
+    for label, session_key in COMMAND_CENTER_SOURCES:
+
+        market = st.session_state.get(session_key)
+
+        if market is None:
+            continue
+
+        df = market["df"]
+
+        if df.empty:
+            continue
+
+        available = [(c, fc, tc) for c, fc, tc in signal_columns if c in df.columns]
+
+        if not available:
+            continue
+
+        mask = pd.Series(False, index=df.index)
+
+        for column, _, _ in available:
+            mask = mask | ~df[column].astype(str).str.contains("watching", case=False, na=False)
+
+        for _, row in df[mask].iterrows():
+
+            entry = {
+                "Source": label,
+                "Status": row.get("Status"),
+                "Ticker": row["Ticker"],
+                "Name": row["Name"],
+                "Price": row.get("Price"),
+            }
+
+            for column, _, ts_column in available:
+                entry[column] = row[column]
+                entry[ts_column] = row.get(ts_column, "—")
+
+            rows.append(entry)
+
+    return pd.DataFrame(rows)
+
+
 def _command_center_timeframe(base_timeframe, why_text):
     """
     The engine that FIRED the signal runs on `base_timeframe`, but its
@@ -1648,6 +1726,33 @@ def render_command_center_tab():
         height=600,
         column_config={"Why": st.column_config.TextColumn("Why", width=520)},
     )
+
+    st.divider()
+    st.subheader("📋 Everything Found — by Timeframe, All Tabs")
+    st.caption(
+        "Every non-Watching read (forming/alert/confirmed/breakout - not just the narrower "
+        "\"act now\" set above) across Global Indices, US Stocks, Indian Stocks, and Crypto, "
+        "grouped by timeframe so it's all in one place instead of tab by tab."
+    )
+
+    for title, key_prefix, signal_columns in COMMAND_CENTER_TIMEFRAME_TABLES:
+
+        table_df = _build_command_center_timeframe_df(signal_columns)
+
+        if table_df.empty:
+            st.caption(f"{title}: nothing beyond Watching right now.")
+            continue
+
+        columns = ["Source", "Status", "Ticker", "Name", "Price"]
+
+        for column, _, ts_column in signal_columns:
+            columns.append(column)
+            columns.append(ts_column)
+
+        Scanner.render(
+            table_df, default_sort=signal_columns[0][0], key_prefix=key_prefix, compact=False,
+            columns=columns, title=title, height=300,
+        )
 
 
 def render_fundamentals_tab():
