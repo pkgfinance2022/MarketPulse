@@ -1158,6 +1158,17 @@ def render_position_form():
         with c4:
             target2 = st.number_input("Target 2 (optional)", min_value=0.0, step=0.01, format="%.4f")
 
+        c5, c6 = st.columns(2)
+
+        with c5:
+            size = st.number_input(
+                "Size (capital committed)", min_value=0.0, step=10.0,
+                help="How much you actually put in - same currency you think in, no conversion.",
+            )
+
+        with c6:
+            leverage = st.number_input("Leverage", min_value=1.0, value=1.0, step=1.0)
+
         notes = st.text_input("Notes (optional)")
 
         submitted = st.form_submit_button("📌 Start following this position")
@@ -1166,16 +1177,27 @@ def render_position_form():
             if not ticker_input.strip():
                 st.error("Enter a ticker first.")
             else:
-                Positions.open_position(
+                rr = Positions.open_position(
                     ticker=ticker_input,
                     direction="SHORT" if direction_label.startswith("Sell") else "LONG",
                     entry=entry,
                     stop=stop,
                     target1=target1,
+                    size=size,
+                    leverage=leverage,
                     target2=target2 if target2 else None,
                     notes=notes,
                 )
                 st.toast(f"Following {resolve_ticker(ticker_input)} now.", icon="📌")
+
+                if rr is not None:
+                    max_loss = size * leverage * abs(entry - stop) / entry if entry else 0
+                    max_gain = size * leverage * abs(target1 - entry) / entry if entry else 0
+                    msg = f"Risk:Reward {rr}:1 — max loss ≈ {max_loss:.2f}, max gain to target ≈ {max_gain:.2f}"
+                    if rr < 1:
+                        st.warning(f"⚠️ {msg} (risking more than the target — worth a second look)")
+                    else:
+                        st.info(msg)
 
 
 @st.fragment(run_every=15)
@@ -1201,7 +1223,7 @@ def render_open_positions():
 
     for idx, row in open_df.iterrows():
 
-        cols = st.columns([2, 1, 1, 1, 1, 1])
+        cols = st.columns([2, 1, 1, 1, 1, 1, 1])
 
         cols[0].markdown(f"**{row['Ticker']}** ({row['Direction']})")
         cols[1].metric("Entry", f"{row['Entry']:.4f}")
@@ -1209,11 +1231,22 @@ def render_open_positions():
         cols[3].metric("Target", f"{row['Target1']:.4f}" if pd.notna(row["Target1"]) else "—")
 
         return_pct = row["ReturnPct"]
-        cols[4].metric("Return", f"{float(return_pct):+.2f}%" if pd.notna(return_pct) else "—")
+        leveraged_pct = row.get("LeveragedReturnPct")
+        return_label = f"{float(return_pct):+.2f}%" if pd.notna(return_pct) else "—"
+        if pd.notna(leveraged_pct) and float(leveraged_pct) != float(return_pct or 0):
+            return_label += f" ({float(leveraged_pct):+.2f}% leveraged)"
+        cols[4].metric("Return", return_label)
 
-        if cols[5].button("✅ Close now", key=f"close_position_{idx}"):
+        pnl = row.get("PnL")
+        cols[5].metric("P&L", f"{float(pnl):+.2f}" if pd.notna(pnl) else "—")
+
+        if cols[6].button("✅ Close now", key=f"close_position_{idx}"):
             Positions.close_manually(idx)
             st.rerun()
+
+        live_note = row.get("LiveNote")
+        if pd.notna(live_note) and live_note:
+            st.caption(f"🤖 {live_note}")
 
         if row.get("Notes"):
             st.caption(f"📝 {row['Notes']}")
@@ -1234,15 +1267,16 @@ def render_position_history():
 
     stats = Positions.summary(df)
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Closed", len(closed_df))
     c2.metric("Hit target", stats["hit_target"])
     c3.metric("Hit stop", stats["hit_stop"])
     c4.metric("Win rate", f"{stats['win_rate']}%")
+    c5.metric("Total P&L", f"{stats['total_pnl']:+.2f}")
 
     display_cols = [
-        "Ticker", "Direction", "Entry", "Stop", "Target1", "OpenedAt",
-        "Status", "ClosedPrice", "ClosedAt", "ReturnPct", "Notes",
+        "Ticker", "Direction", "Entry", "Stop", "Target1", "Size", "Leverage", "OpenedAt",
+        "Status", "ClosedPrice", "ClosedAt", "ReturnPct", "LeveragedReturnPct", "PnL", "Comment", "Notes",
     ]
 
     st.dataframe(
