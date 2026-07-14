@@ -1450,24 +1450,42 @@ def render_universe_live(prefix, title):
     # Three separate tables instead of one wide mixed-timeframe grid -
     # 15m doesn't help for stocks/crypto you don't trade intraday, so
     # Hourly/Daily/Weekly instead of Global Indices' 15m/Hourly/Daily.
-    # All three drive the same selected-ticker detail boxes below.
-    ticker_1h = Scanner.render(
-        df, default_sort="Reversal", key_prefix=f"{prefix}_1h", compact=False,
-        columns=["Status", "Ticker", "Name", "Price", "1H %", "Setup", "Setup Timestamp", "Reversal", "Reversal Timestamp"],
-        title="🕐 Hourly", height=350,
-    )
+    # All three drive the same selected-ticker detail boxes below. Each
+    # is pre-filtered to hide rows with nothing captured yet (plain
+    # Watching across the board), same as Global Indices.
+    df_1h = _only_active_rows(df, ["Setup", "Reversal"])
+    df_1d = _only_active_rows(df, ["Daily Reversal"])
+    df_1w = _only_active_rows(df, ["Weekly"])
 
-    ticker_1d = Scanner.render(
-        df, default_sort="Daily Reversal", key_prefix=f"{prefix}_1d", compact=False,
-        columns=["Status", "Ticker", "Name", "Price", "1D %", "Daily Reversal", "Daily Reversal Timestamp"],
-        title="📆 Daily", height=350,
-    )
+    if df_1h.empty:
+        st.caption("🕐 Hourly: nothing captured yet.")
+        ticker_1h = None
+    else:
+        ticker_1h = Scanner.render(
+            df_1h, default_sort="Reversal", key_prefix=f"{prefix}_1h", compact=False,
+            columns=["Status", "Ticker", "Name", "Price", "1H %", "Setup", "Setup Timestamp", "Reversal", "Reversal Timestamp"],
+            title="🕐 Hourly", height=350,
+        )
 
-    ticker_1w = Scanner.render(
-        df, default_sort="Weekly", key_prefix=f"{prefix}_1w", compact=False,
-        columns=["Status", "Ticker", "Name", "Price", "Weekly", "Weekly Timestamp"],
-        title="🗓 Weekly", height=350,
-    )
+    if df_1d.empty:
+        st.caption("📆 Daily: nothing captured yet.")
+        ticker_1d = None
+    else:
+        ticker_1d = Scanner.render(
+            df_1d, default_sort="Daily Reversal", key_prefix=f"{prefix}_1d", compact=False,
+            columns=["Status", "Ticker", "Name", "Price", "1D %", "Daily Reversal", "Daily Reversal Timestamp"],
+            title="📆 Daily", height=350,
+        )
+
+    if df_1w.empty:
+        st.caption("🗓 Weekly: nothing captured yet.")
+        ticker_1w = None
+    else:
+        ticker_1w = Scanner.render(
+            df_1w, default_sort="Weekly", key_prefix=f"{prefix}_1w", compact=False,
+            columns=["Status", "Ticker", "Name", "Price", "Weekly", "Weekly Timestamp"],
+            title="🗓 Weekly", height=350,
+        )
 
     ticker = _resolve_clicked_ticker(
         prefix,
