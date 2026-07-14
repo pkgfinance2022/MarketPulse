@@ -835,9 +835,16 @@ class ReversalPlaybook:
 
     @classmethod
     def describe(cls, result):
+        """
+        Returns (description, state, levels, event_time) - event_time
+        is the timestamp of whatever discrete event/phase-transition
+        the description is actually reporting (None for a plain
+        WATCHING read with no active event/alert), so callers can show
+        "when did this actually happen" rather than just "as of now."
+        """
 
         if result is None or not result["trace"]:
-            return "Not enough 1H+Daily history to evaluate this instrument yet.", "NONE", None
+            return "Not enough 1H+Daily history to evaluate this instrument yet.", "NONE", None, None
 
         trace = result["trace"]
         last = trace[-1]
@@ -939,6 +946,7 @@ class ReversalPlaybook:
                     f"🟢 BUY signal — Path {path}. RSI {rsi}.{reversal_note}{counter_trend_note}{daily_note}",
                     "BUY_SIGNAL",
                     levels,
+                    last_event_bar["time"],
                 )
 
             if event == "SELL_TRIGGER_BREAKDOWN":
@@ -949,6 +957,7 @@ class ReversalPlaybook:
                     f"🔴 SELL trigger — RSI broke below 40 with price breaking a recent low. RSI {rsi}.{daily_note}",
                     "SELL_SIGNAL",
                     levels,
+                    last_event_bar["time"],
                 )
 
             if event == "SELL_TRIGGER_REJECTION":
@@ -959,6 +968,7 @@ class ReversalPlaybook:
                     f"🔴 SELL trigger — RSI rejected near 60 with price at/below the 1H EMA200. RSI {rsi}.{daily_note}",
                     "SELL_SIGNAL",
                     levels,
+                    last_event_bar["time"],
                 )
 
             if event == "SELL_SIGNAL_CONTINUATION":
@@ -975,10 +985,11 @@ class ReversalPlaybook:
                     f"🔴🔴 SELL continuation — RSI broke below 40, took a slight support bounce, then broke down again. RSI {rsi}.{rejection_note}{daily_note}",
                     "SELL_SIGNAL_CONTINUATION",
                     levels,
+                    last_event_bar["time"],
                 )
 
         if phase == "BUY_ALERT_TOUCH":
-            return f"🟡 BUY watch — 1H RSI touched ≤22 ({rsi}), waiting for a cross above 65.{daily_note}", "BUY_ALERT", None
+            return f"🟡 BUY watch — 1H RSI touched ≤22 ({rsi}), waiting for a cross above 65.{daily_note}", "BUY_ALERT", None, last["wave_start_time"]
 
         if phase == "BUY_ALERT_CONFIRM":
 
@@ -990,13 +1001,16 @@ class ReversalPlaybook:
                     "above the 1H EMA20/200. A re-cross above 65 would confirm the BUY."
                 )
 
+            last_buy_alert_bar = next((bar for bar in reversed(trace) if bar["event"] == "BUY_ALERT"), None)
+
             return (
                 f"🟠 BUY confirmed alert — RSI crossed 65 ({rsi}), watching EMA20/200 spacing or a 200-EMA retest for entry.{forming_note}{daily_note}",
                 "BUY_ALERT_CONFIRM_PATH_C_FORMING" if last["path_c_forming"] else "BUY_ALERT_CONFIRM",
                 None,
+                last_buy_alert_bar["time"] if last_buy_alert_bar else None,
             )
 
-        return f"⚪ Watching — RSI {rsi}, no setup active.{daily_note}", "WATCHING", None
+        return f"⚪ Watching — RSI {rsi}, no setup active.{daily_note}", "WATCHING", None, None
 
     STATE_LABELS = {
         "NONE": "⚪ No data",
@@ -1012,6 +1026,6 @@ class ReversalPlaybook:
     @classmethod
     def short_label(cls, result):
 
-        _, state, _ = cls.describe(result)
+        _, state, _, _ = cls.describe(result)
 
         return cls.STATE_LABELS.get(state, "⚪ Watching")

@@ -56,6 +56,25 @@ UNIVERSE_TABS = [
 UNIVERSE_REFRESH_SECONDS = 3600   # full stock/crypto universes are much bigger than Global Indices - a slow, once-an-hour cadence keeps yfinance usage sane (explicitly requested)
 
 
+def _format_event_time(ts):
+    """
+    Formats an engine's event_time into a display string for the
+    scanner's Timestamp columns. Daily/Weekly bars carry a midnight
+    timestamp (no meaningful hour/minute), so those collapse to just
+    the date; Hourly/15m bars keep the time too.
+    """
+
+    if ts is None or pd.isna(ts):
+        return "—"
+
+    ts = pd.Timestamp(ts)
+
+    if ts.hour == 0 and ts.minute == 0:
+        return ts.strftime("%Y-%m-%d")
+
+    return ts.strftime("%Y-%m-%d %H:%M")
+
+
 def init_state():
 
     defaults = {
@@ -425,11 +444,13 @@ def _scan_global_indices_data(sector):
         wave_labels = {t: RSIWaveStrategy.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in wave_states.items()}
         df["Setup"] = df["Ticker"].map(wave_labels).fillna(df["Setup"])
         df["Setup Full"] = df["Ticker"].map({t: info["description"] for t, info in wave_states.items()}).fillna("")
+        df["Setup Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in wave_states.items()}).fillna("—")
 
         reversal_states = ReversalStatusService.screen_states(tickers)
         reversal_labels = {t: ReversalPlaybook.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in reversal_states.items()}
         df["Reversal"] = df["Ticker"].map(reversal_labels).fillna(df["Reversal"])
         df["Reversal Full"] = df["Ticker"].map({t: info["description"] for t, info in reversal_states.items()}).fillna("")
+        df["Reversal Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in reversal_states.items()}).fillna("—")
 
         # 15m readiness - NOT an independent scan across the whole
         # universe (that dual-timeframe complexity was explicitly
@@ -467,12 +488,14 @@ def _scan_global_indices_data(sector):
         daily_reversal_labels = {t: DailyWeeklyReversalPlaybook.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in daily_reversal_states.items()}
         df["Daily Reversal"] = df["Ticker"].map(daily_reversal_labels).fillna("⚪ Watching")
         df["Daily Reversal Full"] = df["Ticker"].map({t: info["description"] for t, info in daily_reversal_states.items()}).fillna("")
+        df["Daily Reversal Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in daily_reversal_states.items()}).fillna("—")
 
         # Weekly confluence, derived from the same Daily+Weekly scan
         # above - no extra fetch.
         weekly_labels = {t: DailyWeeklyReversalPlaybook.WEEKLY_STATE_LABELS.get(info["weekly_state"], "⚪ Watching") for t, info in daily_reversal_states.items()}
         df["Weekly"] = df["Ticker"].map(weekly_labels).fillna("⚪ Watching")
         df["Weekly Full"] = df["Ticker"].map({t: info["weekly_description"] for t, info in daily_reversal_states.items()}).fillna("")
+        df["Weekly Timestamp"] = df["Ticker"].map({t: _format_event_time(info["weekly_event_time"]) for t, info in daily_reversal_states.items()}).fillna("—")
 
     return {
         "df": df,
@@ -632,13 +655,13 @@ def render_global_indices_live():
 
     ticker_1h = Scanner.render(
         df, default_sort="Reversal", key_prefix="global_1h", compact=False,
-        columns=["Status", "Ticker", "Name", "Price", "1H %", "Setup", "Reversal"],
+        columns=["Status", "Ticker", "Name", "Price", "1H %", "Setup", "Reversal", "Reversal Timestamp"],
         title="🕐 Hourly", height=350,
     )
 
     ticker_1d = Scanner.render(
         df, default_sort="Daily Reversal", key_prefix="global_1d", compact=False,
-        columns=["Status", "Ticker", "Name", "Price", "1D %", "Daily Reversal", "Weekly"],
+        columns=["Status", "Ticker", "Name", "Price", "1D %", "Daily Reversal", "Daily Reversal Timestamp", "Weekly", "Weekly Timestamp"],
         title="📆 Daily", height=350,
     )
 
@@ -1091,11 +1114,13 @@ def _scan_universe_data(country):
         wave_labels = {t: RSIWaveStrategy.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in wave_states.items()}
         df["Setup"] = df["Ticker"].map(wave_labels).fillna(df["Setup"])
         df["Setup Full"] = df["Ticker"].map({t: info["description"] for t, info in wave_states.items()}).fillna("")
+        df["Setup Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in wave_states.items()}).fillna("—")
 
         reversal_states = ReversalStatusService.screen_states(tickers)
         reversal_labels = {t: ReversalPlaybook.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in reversal_states.items()}
         df["Reversal"] = df["Ticker"].map(reversal_labels).fillna(df["Reversal"])
         df["Reversal Full"] = df["Ticker"].map({t: info["description"] for t, info in reversal_states.items()}).fillna("")
+        df["Reversal Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in reversal_states.items()}).fillna("—")
 
         # Daily+Weekly read (separate engine,
         # analysis/reversal_playbook_daily.py) - additive alongside the
@@ -1104,12 +1129,14 @@ def _scan_universe_data(country):
         daily_reversal_labels = {t: DailyWeeklyReversalPlaybook.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in daily_reversal_states.items()}
         df["Daily Reversal"] = df["Ticker"].map(daily_reversal_labels).fillna("⚪ Watching")
         df["Daily Reversal Full"] = df["Ticker"].map({t: info["description"] for t, info in daily_reversal_states.items()}).fillna("")
+        df["Daily Reversal Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in daily_reversal_states.items()}).fillna("—")
 
         # Weekly confluence, derived from the same Daily+Weekly scan
         # above - no extra fetch.
         weekly_labels = {t: DailyWeeklyReversalPlaybook.WEEKLY_STATE_LABELS.get(info["weekly_state"], "⚪ Watching") for t, info in daily_reversal_states.items()}
         df["Weekly"] = df["Ticker"].map(weekly_labels).fillna("⚪ Watching")
         df["Weekly Full"] = df["Ticker"].map({t: info["weekly_description"] for t, info in daily_reversal_states.items()}).fillna("")
+        df["Weekly Timestamp"] = df["Ticker"].map({t: _format_event_time(info["weekly_event_time"]) for t, info in daily_reversal_states.items()}).fillna("—")
 
     return {
         "df": df,
@@ -1335,19 +1362,19 @@ def render_universe_live(prefix, title):
     # All three drive the same selected-ticker detail boxes below.
     ticker_1h = Scanner.render(
         df, default_sort="Reversal", key_prefix=f"{prefix}_1h", compact=False,
-        columns=["Status", "Ticker", "Name", "Price", "1H %", "Setup", "Reversal"],
+        columns=["Status", "Ticker", "Name", "Price", "1H %", "Setup", "Reversal", "Reversal Timestamp"],
         title="🕐 Hourly", height=350,
     )
 
     ticker_1d = Scanner.render(
         df, default_sort="Daily Reversal", key_prefix=f"{prefix}_1d", compact=False,
-        columns=["Status", "Ticker", "Name", "Price", "1D %", "Daily Reversal"],
+        columns=["Status", "Ticker", "Name", "Price", "1D %", "Daily Reversal", "Daily Reversal Timestamp"],
         title="📆 Daily", height=350,
     )
 
     ticker_1w = Scanner.render(
         df, default_sort="Weekly", key_prefix=f"{prefix}_1w", compact=False,
-        columns=["Status", "Ticker", "Name", "Price", "Weekly"],
+        columns=["Status", "Ticker", "Name", "Price", "Weekly", "Weekly Timestamp"],
         title="🗓 Weekly", height=350,
     )
 

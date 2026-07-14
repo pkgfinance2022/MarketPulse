@@ -76,6 +76,7 @@ class RSIWaveStrategy:
             "ema20": ta.trend.ema_indicator(close, window=20),
             "ema200": ta.trend.ema_indicator(close, window=200),
             "rsi": ta.momentum.rsi(typical_price, window=14),
+            "time": df.index,
         }
 
     @classmethod
@@ -86,7 +87,7 @@ class RSIWaveStrategy:
         notable happens - an entry, or a "too late" skip).
         """
 
-        close, ema200, rsi = ind["close"], ind["ema200"], ind["rsi"]
+        close, ema200, rsi, time_index = ind["close"], ind["ema200"], ind["rsi"], ind["time"]
 
         phase = "WATCHING"
         pulled_back_long = False
@@ -190,6 +191,7 @@ class RSIWaveStrategy:
                     "event": event,
                     "rsi": r,
                     "price": price,
+                    "time": time_index[i],
                 }
             )
 
@@ -216,7 +218,7 @@ class RSIWaveStrategy:
         """Plain-English read of the CURRENT state, for a live screener/status box."""
 
         if not trace:
-            return "Not enough 1H history to evaluate this instrument yet.", "NONE"
+            return "Not enough 1H history to evaluate this instrument yet.", "NONE", None
 
         last = trace[-1]
         phase = last["phase"]
@@ -243,15 +245,17 @@ class RSIWaveStrategy:
                     f"🟤 RSI just ran straight through without pausing (already moved {direction}, RSI {rsi}) — "
                     f"too late to chase this one. Watching for the next setup.",
                     "TOO_LATE",
+                    last_event_bar["time"],
                 )
 
-            return f"⚪ Watching — RSI {rsi}, not at an extreme, no setup active.", "WATCHING"
+            return f"⚪ Watching — RSI {rsi}, not at an extreme, no setup active.", "WATCHING", None
 
         if phase == "ALERT_LONG":
             return (
                 f"🟡 Alert (LONG) — RSI touched ≤{cls.OVERSOLD_TOUCH} (oversold) earlier, "
                 f"now recovering to {rsi}. Watching for a clean cross above {cls.INTENT_LONG} to confirm.",
                 "ALERT_LONG",
+                last_event_bar["time"] if last_event_bar else None,
             )
 
         if phase == "ALERT_SHORT":
@@ -259,6 +263,7 @@ class RSIWaveStrategy:
                 f"🟠 Alert (SHORT) — RSI touched ≥{cls.OVERBOUGHT_TOUCH} (overbought) earlier, "
                 f"now cooling to {rsi}. Watching for a clean cross below {cls.INTENT_SHORT} to confirm.",
                 "ALERT_SHORT",
+                last_event_bar["time"] if last_event_bar else None,
             )
 
         if phase == "WAVE_LONG":
@@ -270,12 +275,14 @@ class RSIWaveStrategy:
                     f"🟢 LONG entry {bars_ago} bar(s) ago ({kind}), RSI {rsi}. Riding the wave — "
                     f"price still above EMA200.",
                     "ENTRY_LONG",
+                    last_event_bar["time"],
                 )
 
             return (
                 f"🔵 LONG wave in progress — RSI {rsi}, price above EMA200. "
                 f"Watching for the next pullback-and-resume.",
                 "WAVE_LONG",
+                last_event_bar["time"] if last_event_bar else None,
             )
 
         if phase == "WAVE_SHORT":
@@ -287,15 +294,17 @@ class RSIWaveStrategy:
                     f"🔴 SHORT entry {bars_ago} bar(s) ago ({kind}), RSI {rsi}. Riding the wave — "
                     f"price still below EMA200.",
                     "ENTRY_SHORT",
+                    last_event_bar["time"],
                 )
 
             return (
                 f"🟣 SHORT wave in progress — RSI {rsi}, price below EMA200. "
                 f"Watching for the next pullback-and-resume.",
                 "WAVE_SHORT",
+                last_event_bar["time"] if last_event_bar else None,
             )
 
-        return f"⚪ Watching — RSI {rsi}.", "WATCHING"
+        return f"⚪ Watching — RSI {rsi}.", "WATCHING", None
 
     # Each state gets its own emoji - ALERT_LONG/ALERT_SHORT previously
     # shared the same yellow circle, making them indistinguishable at a
@@ -318,6 +327,6 @@ class RSIWaveStrategy:
     def short_label(cls, trace):
         """One-line label for a screener table cell (no paragraph)."""
 
-        _, state = cls.describe(trace)
+        _, state, _ = cls.describe(trace)
 
         return cls.STATE_LABELS.get(state, "⚪ Watching")

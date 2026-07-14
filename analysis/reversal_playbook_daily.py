@@ -668,9 +668,15 @@ class DailyWeeklyReversalPlaybook:
 
     @classmethod
     def describe(cls, result):
+        """
+        Returns (description, state, levels, event_time) - event_time
+        is the timestamp of whatever discrete event/phase-transition
+        the description is actually reporting (None for a plain
+        WATCHING read with no active event/alert).
+        """
 
         if result is None or not result["trace"]:
-            return "Not enough Daily+Weekly history to evaluate this instrument yet.", "NONE", None
+            return "Not enough Daily+Weekly history to evaluate this instrument yet.", "NONE", None, None
 
         trace = result["trace"]
         last = trace[-1]
@@ -747,6 +753,7 @@ class DailyWeeklyReversalPlaybook:
                     f"🟢 BUY signal (Daily) — Path {path}. RSI {rsi}.{reversal_note}{weekly_note}",
                     "BUY_SIGNAL",
                     levels,
+                    last_event_bar["time"],
                 )
 
             if event == "SELL_TRIGGER_BREAKDOWN":
@@ -757,6 +764,7 @@ class DailyWeeklyReversalPlaybook:
                     f"🔴 SELL trigger (Daily) — RSI broke below 40 with price breaking a recent low. RSI {rsi}.{weekly_note}",
                     "SELL_SIGNAL",
                     levels,
+                    last_event_bar["time"],
                 )
 
             if event == "SELL_TRIGGER_REJECTION":
@@ -767,6 +775,7 @@ class DailyWeeklyReversalPlaybook:
                     f"🔴 SELL trigger (Daily) — RSI rejected near 60 with price at/below the Daily EMA200. RSI {rsi}.{weekly_note}",
                     "SELL_SIGNAL",
                     levels,
+                    last_event_bar["time"],
                 )
 
             if event == "SELL_SIGNAL_CONTINUATION":
@@ -783,10 +792,11 @@ class DailyWeeklyReversalPlaybook:
                     f"🔴🔴 SELL continuation (Daily) — RSI broke below 40, took a slight support bounce, then broke down again. RSI {rsi}.{rejection_note}{weekly_note}",
                     "SELL_SIGNAL_CONTINUATION",
                     levels,
+                    last_event_bar["time"],
                 )
 
         if phase == "BUY_ALERT_TOUCH":
-            return f"🟡 BUY watch (Daily) — RSI touched ≤22 ({rsi}), waiting for a cross above 65.{weekly_note}", "BUY_ALERT", None
+            return f"🟡 BUY watch (Daily) — RSI touched ≤22 ({rsi}), waiting for a cross above 65.{weekly_note}", "BUY_ALERT", None, last["wave_start_time"]
 
         if phase == "BUY_ALERT_CONFIRM":
 
@@ -798,13 +808,16 @@ class DailyWeeklyReversalPlaybook:
                     "above the Daily EMA20/200. A re-cross above 65 would confirm the BUY."
                 )
 
+            last_buy_alert_bar = next((bar for bar in reversed(trace) if bar["event"] == "BUY_ALERT"), None)
+
             return (
                 f"🟠 BUY confirmed alert (Daily) — RSI crossed 65 ({rsi}), watching EMA20/200 spacing or a 200-EMA retest for entry.{forming_note}{weekly_note}",
                 "BUY_ALERT_CONFIRM_PATH_C_FORMING" if last["path_c_forming"] else "BUY_ALERT_CONFIRM",
                 None,
+                last_buy_alert_bar["time"] if last_buy_alert_bar else None,
             )
 
-        return f"⚪ Watching (Daily) — RSI {rsi}, no setup active.{weekly_note}", "WATCHING", None
+        return f"⚪ Watching (Daily) — RSI {rsi}, no setup active.{weekly_note}", "WATCHING", None, None
 
     STATE_LABELS = {
         "NONE": "⚪ No data",
@@ -820,7 +833,7 @@ class DailyWeeklyReversalPlaybook:
     @classmethod
     def short_label(cls, result):
 
-        _, state, _ = cls.describe(result)
+        _, state, _, _ = cls.describe(result)
 
         return cls.STATE_LABELS.get(state, "⚪ Watching")
 
@@ -847,7 +860,7 @@ class DailyWeeklyReversalPlaybook:
         """
 
         if result is None or not result["trace"]:
-            return "Not enough Weekly history to evaluate this instrument yet.", "NONE"
+            return "Not enough Weekly history to evaluate this instrument yet.", "NONE", None
 
         trace = result["trace"]
         last = trace[-1]
@@ -863,6 +876,7 @@ class DailyWeeklyReversalPlaybook:
                     f"📅 Weekly multi-try breakout — RSI broke above {cls.WEEKLY_ZONE_HIGH} after multiple failed tries "
                     f"(weekly RSI {round(last_event_bar['weekly_rsi'], 2)}).",
                     "MULTI_TRY_BREAKOUT",
+                    last_event_bar["time"],
                 )
 
         last_path_c_bar = next((bar for bar in reversed(trace) if bar["weekly_path_c_event"]), None)
@@ -875,12 +889,14 @@ class DailyWeeklyReversalPlaybook:
                     f"📅 Weekly Path C confirmed — RSI held 65 as support and price reclaimed the Weekly 200 EMA "
                     f"(weekly RSI {round(last_path_c_bar['weekly_rsi'], 2)}).",
                     "PATH_C_CONFIRMED",
+                    last_path_c_bar["time"],
                 )
 
         if last["weekly_path_c_forming"]:
             return (
                 f"🔵 Weekly Path C forming — Weekly RSI ({weekly_rsi}) holding 60-65 as support with price above the Weekly 200 EMA.",
                 "PATH_C_FORMING",
+                None,
             )
 
-        return f"⚪ Watching — Weekly RSI {weekly_rsi}, no confluence active.", "WATCHING"
+        return f"⚪ Watching — Weekly RSI {weekly_rsi}, no confluence active.", "WATCHING", None

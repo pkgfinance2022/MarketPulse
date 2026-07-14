@@ -33,7 +33,7 @@ class ReversalStatusService:
         if result is None:
             return None
 
-        description, state, levels = ReversalPlaybook.describe(result)
+        description, state, levels, event_time = ReversalPlaybook.describe(result)
 
         last = result["trace"][-1]
 
@@ -45,6 +45,7 @@ class ReversalStatusService:
             "price": float(last["price"]),
             "rsi": round(last["rsi"], 2),
             "stop_target": levels,
+            "event_time": event_time,
         }
 
     @classmethod
@@ -54,19 +55,20 @@ class ReversalStatusService:
             result = ReversalPlaybook.run_symbol(symbol, period_1h=period_1h, period_daily=period_daily)
 
             if result:
-                description, state, _ = ReversalPlaybook.describe(result)
+                description, state, _, event_time = ReversalPlaybook.describe(result)
                 last = result["trace"][-1]
                 return symbol, {
                     "state": state,
                     "description": description,
                     "price": float(last["price"]),
                     "rsi": round(last["rsi"], 2),
+                    "event_time": event_time,
                 }
 
-            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None}
+            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None, "event_time": None}
 
         except Exception:
-            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None}
+            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None, "event_time": None}
 
     @classmethod
     def screen_states(cls, symbols, period_1h="730d", period_daily="5y"):

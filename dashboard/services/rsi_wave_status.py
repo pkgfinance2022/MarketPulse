@@ -36,7 +36,7 @@ class RSIWaveStatusService:
         if trace is None:
             return None
 
-        description, state = RSIWaveStrategy.describe(trace)
+        description, state, event_time = RSIWaveStrategy.describe(trace)
         last = trace[-1]
 
         direction = ACTIONABLE_STATES.get(state)
@@ -69,6 +69,7 @@ class RSIWaveStatusService:
             "rsi": round(last["rsi"], 2),
             "direction": direction,
             "stop_target": stop_target,
+            "event_time": event_time,
         }
 
     @staticmethod
@@ -109,19 +110,20 @@ class RSIWaveStatusService:
             trace, _ = RSIWaveStrategy.run_symbol(symbol, period=period)
 
             if trace:
-                description, state = RSIWaveStrategy.describe(trace)
+                description, state, event_time = RSIWaveStrategy.describe(trace)
                 last = trace[-1]
                 return symbol, {
                     "state": state,
                     "description": description,
                     "price": last["price"],
                     "rsi": round(last["rsi"], 2),
+                    "event_time": event_time,
                 }
 
-            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None}
+            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None, "event_time": None}
 
         except Exception:
-            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None}
+            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None, "event_time": None}
 
     @classmethod
     def screen_states(cls, symbols, period="730d"):
