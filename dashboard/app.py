@@ -578,6 +578,42 @@ def _refresh_global_indices(sector):
         st.caption(f"🕐 Last refreshed at {refreshed_at} ({age_minutes} min ago) — refreshes automatically every {GLOBAL_INDICES_REFRESH_SECONDS // 60} min, or click Scan Now above.")
 
 
+def _resolve_clicked_ticker(prefix, selections):
+    """
+    Picks whichever ticker was just ACTUALLY clicked across several
+    independent Scanner tables on the same tab.
+
+    Each st.dataframe row-selection widget keeps its own selected row
+    checked across reruns until the user changes it - so on any given
+    rerun, more than one table can simultaneously report "row X is
+    selected" (whatever was last clicked in each of them, possibly
+    days ago). Naively taking "the first truthy one" in a fixed table
+    order means an old, stale selection in an earlier table always
+    wins over a fresh click in a later one - which is exactly the "the
+    TradingView link opens the wrong/random ticker" bug: clicking a
+    row in the Volatility table did nothing because the Hourly table's
+    older selection kept taking priority.
+
+    Compares each table's current selection against what it returned
+    last render; whichever one actually changed is this render's real
+    click. Returns None if nothing changed (nobody clicked anything
+    new this run).
+    """
+
+    state_key = f"{prefix}_last_table_selection"
+    previous = st.session_state.get(state_key, {})
+
+    changed = None
+
+    for table_key, ticker in selections.items():
+        if ticker != previous.get(table_key):
+            changed = ticker
+
+    st.session_state[state_key] = dict(selections)
+
+    return changed
+
+
 def _only_active_rows(df, columns):
     """
     Hides rows where every one of `columns` is a neutral read - "⚪
@@ -723,7 +759,10 @@ def render_global_indices_live():
         title="🌡 Volatility Ranking — where to focus right now", height=350,
     )
 
-    ticker = ticker_15m or ticker_1h or ticker_1d or ticker_vol
+    ticker = _resolve_clicked_ticker(
+        "global",
+        {"15m": ticker_15m, "1h": ticker_1h, "1d": ticker_1d, "vol": ticker_vol},
+    )
 
     if ticker:
         st.session_state.global_selected_ticker = ticker
@@ -1430,7 +1469,10 @@ def render_universe_live(prefix, title):
         title="🗓 Weekly", height=350,
     )
 
-    ticker = ticker_1h or ticker_1d or ticker_1w
+    ticker = _resolve_clicked_ticker(
+        prefix,
+        {"1h": ticker_1h, "1d": ticker_1d, "1w": ticker_1w},
+    )
 
     if ticker:
         st.session_state[f"{prefix}_selected_ticker"] = ticker
