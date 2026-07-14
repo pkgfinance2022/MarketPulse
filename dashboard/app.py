@@ -8,6 +8,7 @@ the engines and services, while widgets only render already-prepared data.
 import json
 import sys
 import time
+from datetime import timedelta
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -452,6 +453,24 @@ def check_for_new_reversal_signals():
 
 GLOBAL_INDICES_REFRESH_SECONDS = 600   # faster than the universe tabs' hourly cadence (this is the "live, intraday" tab), but not so fast it re-fires the 4-engine scan pointlessly often
 
+# US market open (9:30 ET) usually lands at 15:30 CET, but shifts to 14:30
+# CET during the ~1-2 week windows each spring/autumn where the US and EU
+# flip their DST clocks on different Sundays - so both are covered. Global
+# macro assets (European indices, currencies, commodities) tend to move
+# right as the US session opens, so this forces an early refresh instead
+# of waiting for the routine 10-minute cadence to catch up.
+US_MARKET_OPEN_CET_TIMES = ((14, 30), (15, 30))
+US_MARKET_OPEN_REFRESH_WINDOW_MINUTES = 10
+
+
+def _in_us_market_open_refresh_window(now_cet, cache_ts):
+    for hour, minute in US_MARKET_OPEN_CET_TIMES:
+        window_start = now_cet.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        window_end = window_start + timedelta(minutes=US_MARKET_OPEN_REFRESH_WINDOW_MINUTES)
+        if window_start <= now_cet <= window_end and cache_ts < window_start.timestamp():
+            return True
+    return False
+
 
 def _scan_global_indices_data(sector):
     """
@@ -567,7 +586,10 @@ def _refresh_global_indices(sector):
     cache_entry = universe_cache.get(cache_key)
     stale = (
         cache_entry is None
-        or (not cache_entry["loading"] and (time.time() - cache_entry["ts"]) >= GLOBAL_INDICES_REFRESH_SECONDS)
+        or (not cache_entry["loading"] and (
+            (time.time() - cache_entry["ts"]) >= GLOBAL_INDICES_REFRESH_SECONDS
+            or _in_us_market_open_refresh_window(time_utils.now_cet(), cache_entry["ts"])
+        ))
     )
 
     if stale:
@@ -613,6 +635,21 @@ def _refresh_global_indices(sector):
         st.caption(f"🕐 Showing data from {refreshed_at} ({age_minutes} min ago) — 🔄 a fresh scan is running in the background, {_scan_eta_text(cache_entry)}.")
     else:
         st.caption(f"🕐 Last refreshed at {refreshed_at} ({age_minutes} min ago) — refreshes automatically every {GLOBAL_INDICES_REFRESH_SECONDS // 60} min, or click Scan Now above.")
+
+
+@st.fragment(run_every=20)
+def refresh_global_indices():
+    """
+    Polls the staleness check on its own timer - same idea as
+    refresh_us_universe()/refresh_india_universe()/refresh_crypto_universe()
+    below - so the US-market-open force-refresh window in
+    _refresh_global_indices() actually fires on the wall clock instead of
+    only being checked when a user happens to click something on this tab.
+    """
+
+    sector = st.session_state.get("global_sector")
+    if sector:
+        _refresh_global_indices(sector)
 
 
 def _resolve_clicked_ticker(prefix, selections):
@@ -711,16 +748,19 @@ def _vix_risk_note(df):
 @st.fragment(run_every=45)
 def render_global_indices_live():
     """
-    The only auto-refreshing part of the page. Reruns on its own every
-    45s without touching the sidebar, the main Scanner tab, or
-    triggering a full DashboardLoader.load() - it only re-fetches 15m
-    bars for the tickers already loaded into `global_market`.
+    Reruns on its own every 45s without touching the sidebar, the main
+    Scanner tab, or triggering a full DashboardLoader.load() - it only
+    re-fetches 15m bars for the tickers already loaded into
+    `global_market`. (refresh_global_indices() above is the other
+    auto-refreshing piece on this tab - it's on its own 20s timer so
+    the staleness/US-market-open checks in _refresh_global_indices()
+    fire on the wall clock too.)
     """
 
     market = st.session_state.global_market
 
     if market is None:
-        # _refresh_global_indices() (called just before this) already
+        # refresh_global_indices() (called just before this) already
         # shows its own "scanning for the first time" message - nothing
         # more to add here until that first background scan lands.
         return
@@ -1256,7 +1296,7 @@ def render_global_indices_tab(meta):
         started = universe_cache.start_scan(f"global_{sector}", lambda: _scan_global_indices_data(sector), pool="global")
         st.toast("Scanning in the background..." if started else "Already scanning in the background...", icon="🔄")
 
-    _refresh_global_indices(sector)
+    refresh_global_indices()
 
     render_global_indices_live()
     check_for_new_entries()
