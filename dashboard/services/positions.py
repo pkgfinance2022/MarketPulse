@@ -345,12 +345,17 @@ class Positions:
 
     @classmethod
     def close_manually(cls, row_index):
-        """Closes a still-OPEN position right now, at the latest available price."""
+        """
+        Closes a still-OPEN position right now, at the latest available
+        price. Returns True on success, False if it couldn't (already
+        closed/removed, or the price fetch failed) - the caller should
+        surface that rather than treating a no-op as if it worked.
+        """
 
         df = cls.load()
 
         if row_index not in df.index or df.at[row_index, "Status"] != "OPEN":
-            return
+            return False
 
         ticker = df.at[row_index, "Ticker"]
 
@@ -359,9 +364,10 @@ class Positions:
             price = float(bars["Close"].iloc[-1]) if not bars.empty else None
         except Exception:
             price = None
+            bars = None
 
         if price is None:
-            return
+            return False
 
         entry = float(df.at[row_index, "Entry"])
         direction = df.at[row_index, "Direction"]
@@ -388,6 +394,8 @@ class Positions:
         df.at[row_index, "Comment"] = f"{existing} · {closing_note}" if pd.notna(existing) and existing else closing_note
 
         df.to_csv(POSITIONS_PATH, index=False)
+
+        return True
 
     @classmethod
     def remove(cls, row_index):

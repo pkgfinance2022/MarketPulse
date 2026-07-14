@@ -1223,33 +1223,39 @@ def render_open_positions():
 
     for idx, row in open_df.iterrows():
 
-        cols = st.columns([2, 1, 1, 1, 1, 1, 1])
+        cols = st.columns([2, 1, 1, 1, 1, 1])
 
         cols[0].markdown(f"**{row['Ticker']}** ({row['Direction']})")
         cols[1].metric("Entry", f"{row['Entry']:.4f}")
         cols[2].metric("Stop", f"{row['Stop']:.4f}")
         cols[3].metric("Target", f"{row['Target1']:.4f}" if pd.notna(row["Target1"]) else "—")
 
+        pnl = row.get("PnL")
+        cols[4].metric("P&L", f"{float(pnl):+.2f}" if pd.notna(pnl) else "—")
+
+        if cols[5].button("✅ Close now", key=f"close_position_{idx}"):
+            # No st.rerun() here - clicking a widget inside a fragment
+            # already reruns just that fragment on its own; an extra
+            # explicit rerun on top of that raced against this
+            # fragment's own 15s timer and made the click occasionally
+            # look like it did nothing.
+            if not Positions.close_manually(idx):
+                st.error("Couldn't fetch a current price to close at - try again in a moment.")
+
         return_pct = row["ReturnPct"]
         leveraged_pct = row.get("LeveragedReturnPct")
-        return_label = f"{float(return_pct):+.2f}%" if pd.notna(return_pct) else "—"
+        return_line = f"Return: {float(return_pct):+.2f}%" if pd.notna(return_pct) else "Return: —"
         if pd.notna(leveraged_pct) and float(leveraged_pct) != float(return_pct or 0):
-            return_label += f" ({float(leveraged_pct):+.2f}% leveraged)"
-        cols[4].metric("Return", return_label)
-
-        pnl = row.get("PnL")
-        cols[5].metric("P&L", f"{float(pnl):+.2f}" if pd.notna(pnl) else "—")
-
-        if cols[6].button("✅ Close now", key=f"close_position_{idx}"):
-            Positions.close_manually(idx)
-            st.rerun()
+            return_line += f" (leveraged: {float(leveraged_pct):+.2f}%)"
+        st.caption(return_line)
 
         live_note = row.get("LiveNote")
         if pd.notna(live_note) and live_note:
             st.caption(f"🤖 {live_note}")
 
-        if row.get("Notes"):
-            st.caption(f"📝 {row['Notes']}")
+        notes = row.get("Notes")
+        if pd.notna(notes) and notes:
+            st.caption(f"📝 {notes}")
 
         st.divider()
 
