@@ -926,6 +926,94 @@ def render_parked_trades():
             st.rerun()
 
 
+def _humanize_alert_age(ts):
+    """
+    "5m ago" / "3h ago" / "Yesterday" / "Jul 09, 2:30 PM CET" - reads
+    like a social-media notification feed close up (relative) and
+    falls back to an absolute CET timestamp once it's more than a
+    day old, when "X hours ago" stops being a useful measure.
+    """
+
+    if pd.isna(ts):
+        return "—"
+
+    delta_seconds = (time_utils.now_cet().replace(tzinfo=None) - ts).total_seconds()
+
+    if delta_seconds < 60:
+        return "just now"
+
+    if delta_seconds < 3600:
+        return f"{int(delta_seconds // 60)}m ago"
+
+    if delta_seconds < 86400:
+        return f"{int(delta_seconds // 3600)}h ago"
+
+    if delta_seconds < 172800:
+        return "Yesterday"
+
+    hour12 = ts.hour % 12 or 12
+    ampm = "AM" if ts.hour < 12 else "PM"
+
+    return f"{ts.strftime('%b %d')}, {hour12}:{ts.minute:02d} {ampm} CET"
+
+
+def render_notifications_feed():
+    """
+    Every alert MarketPulse has actually pushed to you (desktop
+    notification, Telegram, and in-app toast, across Global Indices,
+    US, India, and Crypto) as one scrollable feed, newest first - the
+    same underlying log as Alert Tracking below, just read as "what
+    did you tell me and when" instead of "did it hit target/stop".
+    """
+
+    st.subheader("🔔 Notifications")
+
+    df = AlertLog.load()
+
+    if df.empty:
+        st.info("No notifications yet - alerts will show up here the moment something fires.")
+        return
+
+    df = df.copy()
+    df["_ts"] = pd.to_datetime(df["Timestamp"], errors="coerce")
+    df = df.sort_values("_ts", ascending=False)
+
+    new_count = int((df["_ts"] >= time_utils.now_cet().replace(tzinfo=None) - pd.Timedelta(hours=1)).sum())
+
+    st.caption(
+        f"🆕 {new_count} in the last hour" if new_count else "Nothing new in the last hour"
+    )
+
+    for _, row in df.head(50).iterrows():
+
+        icon = "🟢" if row["Direction"] == "LONG" else "🔴"
+        is_new = pd.notna(row["_ts"]) and (time_utils.now_cet().replace(tzinfo=None) - row["_ts"]).total_seconds() < 3600
+
+        with st.container(border=True):
+
+            text_col, time_col = st.columns([5, 2])
+
+            with text_col:
+
+                st.markdown(f"{icon} **{row['Direction']} — {row['Name']} ({row['Ticker']})**" + (" 🆕" if is_new else ""))
+
+                levels = ""
+                if pd.notna(row.get("Stop")):
+                    levels = f" · Stop {row['Stop']} · Target {row['Target1']}"
+
+                st.caption(f"Price {row['EntryPrice']} · RSI {row['RSI']}{levels}")
+
+            with time_col:
+                st.caption(_humanize_alert_age(row["_ts"]))
+
+
+def render_notifications_tab():
+
+    render_notifications_feed()
+    st.divider()
+    render_alert_tracking()
+
+
 def render_alert_tracking():
     """
     Every alert the system has actually sent, auto-logged (see
@@ -1136,9 +1224,6 @@ def render_global_indices_tab(meta):
     render_global_indices_live()
     check_for_new_entries()
     check_for_new_reversal_signals()
-
-    st.divider()
-    render_alert_tracking()
 
     st.divider()
     render_parked_trades()
@@ -2015,12 +2100,15 @@ def main():
     # never actually scanned (stale/fake), duplicating Command Center
     # without the fix; its AI Score/chart/stock-details features had
     # no unique value the four specialized tabs don't already cover.
-    tab_command, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals = st.tabs(
-        ["🎯 Command Center", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals"]
+    tab_command, tab_notifications, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals = st.tabs(
+        ["🎯 Command Center", "🔔 Notifications", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals"]
     )
 
     with tab_command:
         render_command_center_tab()
+
+    with tab_notifications:
+        render_notifications_tab()
 
     with tab_global:
         render_global_indices_tab(meta)
