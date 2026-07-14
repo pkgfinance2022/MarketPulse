@@ -13,11 +13,11 @@ persistence convention. Gitignored (user-generated runtime data, not
 source).
 """
 
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
+from dashboard.services.time_utils import now_cet
 from providers.yahoo import YahooProvider
 
 LOG_PATH = Path(__file__).resolve().parent.parent.parent / "database" / "alert_log.csv"
@@ -88,7 +88,7 @@ class AlertLog:
         except Exception:
             return False
 
-        return (datetime.now() - last_logged).total_seconds() < within_minutes * 60
+        return (now_cet().replace(tzinfo=None) - last_logged).total_seconds() < within_minutes * 60
 
     @classmethod
     def log_alert(cls, ticker, name, direction, entry_price, rsi, stop_target):
@@ -98,7 +98,7 @@ class AlertLog:
         df = cls.load()
 
         row = {
-            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "Timestamp": now_cet().strftime("%Y-%m-%d %H:%M:%S"),
             "Ticker": ticker,
             "Name": name,
             "Direction": direction,
@@ -194,7 +194,7 @@ class AlertLog:
             if status != "OPEN":
                 df.at[idx, "Status"] = status
                 df.at[idx, "ClosedPrice"] = round(price, 2)
-                df.at[idx, "ClosedAt"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                df.at[idx, "ClosedAt"] = now_cet().strftime("%Y-%m-%d %H:%M:%S")
 
         df.to_csv(LOG_PATH, index=False)
 

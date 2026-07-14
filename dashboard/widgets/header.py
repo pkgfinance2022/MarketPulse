@@ -1,5 +1,6 @@
 import streamlit as st
-from datetime import datetime
+
+from dashboard.services.time_utils import now_cet
 
 
 class Header:
@@ -20,8 +21,8 @@ class Header:
         with right:
 
             st.metric(
-                "Updated",
-                datetime.now().strftime("%H:%M:%S")
+                "Updated (CET)",
+                now_cet().strftime("%H:%M:%S")
             )
 
         st.divider()

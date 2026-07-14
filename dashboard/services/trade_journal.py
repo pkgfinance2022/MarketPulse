@@ -8,10 +8,11 @@ treats CSV as its persistence layer (database/*_master.csv) - durable
 across restarts, human-readable, no new dependency.
 """
 
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+
+from dashboard.services.time_utils import now_cet
 
 JOURNAL_PATH = Path(__file__).resolve().parent.parent.parent / "database" / "parked_trades.csv"
 
@@ -64,7 +65,7 @@ class TradeJournal:
             "RiskReward": stop_target["risk_reward"],
             "Trend": trend,
             "RSI": rsi,
-            "ParkedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "ParkedAt": now_cet().strftime("%Y-%m-%d %H:%M:%S"),
             "Notes": notes,
         }
 

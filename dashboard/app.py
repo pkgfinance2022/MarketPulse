@@ -8,7 +8,6 @@ the engines and services, while widgets only render already-prepared data.
 import json
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -33,6 +32,7 @@ from dashboard.services.stock_news_service import StockNewsService
 from dashboard.services.telegram_notifier import TelegramNotifier
 from dashboard.services.tradingview_links import tradingview_url
 from dashboard.services.trade_journal import TradeJournal
+from dashboard.services import time_utils
 from dashboard.services import universe_cache
 from dashboard.widgets.header import Header
 from dashboard.widgets.market_status import MarketStatus
@@ -59,9 +59,14 @@ UNIVERSE_REFRESH_SECONDS = 3600   # full stock/crypto universes are much bigger 
 def _format_event_time(ts):
     """
     Formats an engine's event_time into a display string for the
-    scanner's Timestamp columns. Daily/Weekly bars carry a midnight
-    timestamp (no meaningful hour/minute), so those collapse to just
-    the date; Hourly/15m bars keep the time too.
+    scanner's Timestamp columns. Hourly/15m bars carry a real time of
+    day, always converted to CET/CEST so events from different
+    exchanges (each with their own tz from yfinance) read on one
+    shared clock instead of a different one per row. Daily/Weekly bars
+    carry a midnight exchange-local timestamp that only identifies
+    WHICH trading day - converting that to CET would risk shifting it
+    onto the wrong calendar date (e.g. a Tokyo midnight bar sliding
+    back a day), so those are shown as their original date, untouched.
     """
 
     if ts is None or pd.isna(ts):
@@ -72,7 +77,7 @@ def _format_event_time(ts):
     if ts.hour == 0 and ts.minute == 0:
         return ts.strftime("%Y-%m-%d")
 
-    return ts.strftime("%Y-%m-%d %H:%M")
+    return time_utils.to_cet(ts).strftime("%Y-%m-%d %H:%M CET")
 
 
 def init_state():
@@ -254,7 +259,7 @@ def check_for_new_entries():
         icon = "🟢" if entry["direction"] == "LONG" else "🔴"
         price = round(entry["price"], 2) if entry["price"] is not None else "?"
         rsi = entry["rsi"] if entry["rsi"] is not None else "?"
-        event_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
 
         # Computed once, reused for the message AND the log - avoids
         # a second fetch and guarantees the alert you see matches
@@ -359,7 +364,7 @@ def check_for_new_reversal_signals():
         icon = "🟢" if signal["direction"] == "LONG" else "🔴"
         price = round(signal["price"], 2) if signal["price"] is not None else "?"
         signal_label = REVERSAL_SIGNAL_LABELS.get(signal["state"], signal["state"])
-        event_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
 
         full_status = ReversalStatusService.analyse(signal["ticker"])
         stop_target = full_status["stop_target"] if full_status else None
@@ -559,7 +564,7 @@ def _refresh_global_indices(sector):
 
     last_loaded = cache_entry["ts"]
     age_minutes = round((time.time() - last_loaded) / 60)
-    refreshed_at = time.strftime("%H:%M:%S", time.localtime(last_loaded))
+    refreshed_at = time_utils.unix_to_cet(last_loaded).strftime("%H:%M:%S CET")
 
     if cache_entry["loading"]:
         st.caption(f"🕐 Showing data from {refreshed_at} ({age_minutes} min ago) — 🔄 a fresh scan is running in the background.")
@@ -1302,7 +1307,7 @@ def _refresh_universe_body(prefix, country):
 
     last_loaded = st.session_state[f"{prefix}_last_loaded_ts"]
     age_minutes = round((time.time() - last_loaded) / 60)
-    refreshed_at = time.strftime("%H:%M:%S", time.localtime(last_loaded))
+    refreshed_at = time_utils.unix_to_cet(last_loaded).strftime("%H:%M:%S CET")
 
     if cache_entry["loading"]:
         st.caption(f"🕐 Showing data from {refreshed_at} ({age_minutes} min ago) — 🔄 a fresh scan is running in the background and will swap in automatically once done.")
