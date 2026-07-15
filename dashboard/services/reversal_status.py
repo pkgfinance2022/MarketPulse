@@ -16,6 +16,7 @@ from analysis.reversal_playbook import ReversalPlaybook
 
 ACTIONABLE_STATES = {
     "BUY_SIGNAL": "LONG",
+    "BUY_SIGNAL_PATH_C": "LONG",
     "SELL_SIGNAL": "SHORT",
     "SELL_SIGNAL_CONTINUATION": "SHORT",
 }

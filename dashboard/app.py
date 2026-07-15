@@ -344,12 +344,14 @@ def check_for_new_entries():
 
 REVERSAL_SIGNAL_DIRECTIONS = {
     "BUY_SIGNAL": "LONG",
+    "BUY_SIGNAL_PATH_C": "LONG",
     "SELL_SIGNAL": "SHORT",
     "SELL_SIGNAL_CONTINUATION": "SHORT",
 }
 
 REVERSAL_SIGNAL_LABELS = {
     "BUY_SIGNAL": "BUY",
+    "BUY_SIGNAL_PATH_C": "BUY (2nd touch — higher confidence)",
     "SELL_SIGNAL": "SELL",
     "SELL_SIGNAL_CONTINUATION": "SELL (continuation)",
 }
@@ -540,7 +542,7 @@ def _scan_global_indices_data(sector):
         # own signal at that moment" pattern, described twice now).
         confirmed_tickers = [
             t for t, info in reversal_states.items()
-            if info["state"] in ("BUY_ALERT_CONFIRM", "BUY_ALERT_CONFIRM_PATH_C_FORMING", "BUY_SIGNAL")
+            if info["state"] in ("BUY_ALERT_CONFIRM", "BUY_ALERT_CONFIRM_PATH_C_FORMING", "BUY_SIGNAL", "BUY_SIGNAL_PATH_C")
             or "Uptrend RSI-40 support" in info["description"]
         ]
 
@@ -1346,7 +1348,8 @@ ALERT_TYPE_MEANINGS = {
     ("Reversal", "BUY_ALERT"): ("1H RSI touched ≤22 (oversold), price above Daily 200 EMA. Watching for a cross above 65.", "No — wait"),
     ("Reversal", "BUY_ALERT_CONFIRM"): ("1H RSI crossed 65. Watching EMA20/200 spacing, a 200-EMA retest, or RSI holding 65 as support + a fresh EMA200 reclaim, for the actual entry.", "No — wait"),
     ("Reversal", "BUY_ALERT_CONFIRM_PATH_C_FORMING"): ("RSI is currently holding the 60-65 zone as support AND price is already holding above the 1H EMA20/200 - Path C could confirm on the very next bar.", "No — watch closely"),
-    ("Reversal", "BUY_SIGNAL"): ("Entry condition met — Path A (EMA20/200 far apart), Path B (200-EMA reclaim + retest), or Path C (RSI held 65 as support + 200-EMA reclaim).", "Yes — BUY"),
+    ("Reversal", "BUY_SIGNAL"): ("Entry condition met — Path A (EMA20/200 far apart) or Path B (200-EMA reclaim + retest).", "Yes — BUY"),
+    ("Reversal", "BUY_SIGNAL_PATH_C"): ("Path C specifically — RSI crossed 65, pulled back to hold 60-65 as support, then crossed 65 a SECOND time with price already reclaiming the EMA20/200. This second touch typically carries more confidence than a first-touch confirm.", "Yes — BUY (higher confidence)"),
     ("Reversal", "SELL_SIGNAL"): ("RSI broke below 40 with a fresh low, or got rejected near 60 at 1H EMA200 resistance.", "Yes — SELL"),
     ("Reversal", "SELL_SIGNAL_CONTINUATION"): ("After an initial breakdown, RSI took a weak 'slight support' bounce (stayed below 50) then broke to a fresh low again - a stronger bear continuation, more so if it followed a failed 60-65 rejection.", "Yes — SELL (stronger)"),
 }

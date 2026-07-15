@@ -935,16 +935,27 @@ class ReversalPlaybook:
                 path_names = {
                     "BUY_SIGNAL_PATH_A": "A (EMA20/200 far apart)",
                     "BUY_SIGNAL_PATH_B": "B (200 EMA reclaimed + retest)",
-                    "BUY_SIGNAL_PATH_C": "C (RSI held 65 as support + 200 EMA reclaimed)",
+                    "BUY_SIGNAL_PATH_C": "C (2nd touch of 65 - RSI held it as support, then crossed again + 200 EMA reclaimed)",
                     "BUY_SIGNAL_PATH_D": "D (200 EMA reclaimed + retest, against the daily trend)",
                 }
                 path = path_names[event]
                 reversal_note = " ⚠️ This reverses a recent SELL trigger - that thesis is now invalidated." if last_event_bar["reverses_sell"] else ""
                 counter_trend_note = " ⚠️ Counter-trend: price is still below the Daily 200 EMA - riskier than Paths A/B/C." if event == "BUY_SIGNAL_PATH_D" else ""
 
+                # Path C gets its own distinct state (not folded into
+                # the generic BUY_SIGNAL) - it's the one path that's
+                # genuinely a SECOND touch of 65 (crossed once, held
+                # 60-65 as support on the pullback, crossed again),
+                # same idea as SELL_SIGNAL_CONTINUATION already being
+                # split out from SELL_SIGNAL on the sell side. Second
+                # touches read as higher-confidence, so they deserve
+                # their own label instead of looking identical to a
+                # first-touch Path A/B confirm.
+                state = "BUY_SIGNAL_PATH_C" if event == "BUY_SIGNAL_PATH_C" else "BUY_SIGNAL"
+
                 return (
                     f"🟢 BUY signal — Path {path}. RSI {rsi}.{reversal_note}{counter_trend_note}{daily_note}",
-                    "BUY_SIGNAL",
+                    state,
                     levels,
                     last_event_bar["time"],
                 )
@@ -1019,6 +1030,7 @@ class ReversalPlaybook:
         "BUY_ALERT_CONFIRM": "🟠 Buy alert — RSI crossed 65",
         "BUY_ALERT_CONFIRM_PATH_C_FORMING": "🔵 Path C forming — watch closely",
         "BUY_SIGNAL": "🟢 BUY signal",
+        "BUY_SIGNAL_PATH_C": "🟢🟢 BUY signal — 2nd touch (higher confidence)",
         "SELL_SIGNAL": "🔴 SELL trigger",
         "SELL_SIGNAL_CONTINUATION": "🔴🔴 SELL continuation",
     }
