@@ -2255,12 +2255,21 @@ def render_global_indices_movers():
     is cheap, but nesting it means a tick here doesn't force the
     heavier "act now"/"Everything Found" aggregation above to redraw
     too, and vice versa.
+
+    Deliberately NOT using Scanner.render() here - its sort widget
+    freezes row order across reruns on purpose (protects click-to-
+    select from resolving a click against the wrong ticker after a
+    reorder), which is exactly wrong for this table: nothing here is
+    click-selected, and the whole point is seeing the CURRENT biggest
+    movers reshuffle to the top on every refresh, never a frozen order.
     """
 
     st.subheader("📈 Global Indices — Movers")
     st.caption(
         "Every Global Indices instrument, not just ones with an active Setup/Reversal signal - so you "
-        "can see where the actual move is right now, not just where the algo has already flagged something."
+        "can see where the actual move is right now, not just where the algo has already flagged "
+        "something. Always sorted by move size, biggest first; closed markets are pushed to the "
+        "bottom regardless of their last move, since they're not actually moving right now."
     )
 
     global_market = st.session_state.get("global_market")
@@ -2274,16 +2283,22 @@ def render_global_indices_movers():
     )
     move_col = "15m %" if timeframe_choice == "15m" else "1H %"
 
-    # key_prefix changes with the radio choice on purpose - Scanner's
-    # own sort selectbox only honors default_sort the first time a
-    # given widget key is created, so keeping one fixed key_prefix
-    # here would silently ignore switching the timeframe after the
-    # first render.
-    Scanner.render(
-        global_market["df"], default_sort=move_col, key_prefix=f"command_center_movers_{timeframe_choice}",
-        compact=False,
-        columns=["Status", "Ticker", "Name", "Price", "15m %", "1H %"],
-        title=f"All Global Indices — sorted by {timeframe_choice} move",
+    df = global_market["df"][["Status", "Ticker", "Name", "Price", "15m %", "1H %"]].copy()
+
+    # Two-level sort, freshly re-applied on every single render (no
+    # frozen order): closed markets ranked last regardless of move
+    # size, then the chosen move column, biggest first. "Closed" is
+    # matched by substring since the real Status values carry an emoji
+    # prefix ("🔴 Closed", vs "🟢 Live"/"🟢 24x7"/"🟡 Pre"/"🟠 After") -
+    # Pre-market/After-hours are left in the normal sort since they're
+    # still genuinely trading, just thinner.
+    df["_closed"] = df["Status"].str.contains("Closed", na=False)
+    df = df.sort_values(["_closed", move_col], ascending=[True, False]).drop(columns="_closed")
+
+    st.dataframe(
+        df.style.map(Scanner.color_price, subset=["15m %", "1H %"]),
+        use_container_width=True,
+        hide_index=True,
         height=500,
     )
 
