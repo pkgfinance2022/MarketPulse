@@ -1068,7 +1068,18 @@ def render_notifications_feed():
     df["_ts"] = pd.to_datetime(df["Timestamp"], errors="coerce")
     df = df.sort_values("_ts", ascending=False)
 
-    new_count = int((df["_ts"] >= time_utils.now_cet().replace(tzinfo=None) - pd.Timedelta(hours=1)).sum())
+    now = time_utils.now_cet().replace(tzinfo=None)
+
+    # Older entries stay in Alert Tracking below (durable history for
+    # later analysis) - this feed is just "what's actually new," so a
+    # 2-day-old push isn't worth scrolling past anymore.
+    df = df[df["_ts"] >= now - pd.Timedelta(days=2)]
+
+    if df.empty:
+        st.info("Nothing in the last 2 days - older alerts are still in Alert Tracking below.")
+        return
+
+    new_count = int((df["_ts"] >= now - pd.Timedelta(hours=1)).sum())
 
     st.caption(
         f"🆕 {new_count} in the last hour" if new_count else "Nothing new in the last hour"
