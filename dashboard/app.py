@@ -1977,6 +1977,21 @@ def render_universe_live(prefix, title):
     if not selected:
         return
 
+    _render_ticker_detail(selected, show_hourly, key_prefix=prefix)
+
+
+def _render_ticker_detail(selected, show_hourly, key_prefix):
+    """
+    RSI Wave Setup (1H) + Reversal Playbook (1H+Daily) + Reversal
+    Playbook (Daily+Weekly) for one ticker - shared by every universe
+    tab and the ad-hoc Algo Test tab below. Each *StatusService.analyse()
+    call fetches and computes fresh from the ticker string alone - no
+    dependency on a pre-scanned universe dataframe, so this works for
+    literally any symbol, not just ones already sitting in session
+    state. key_prefix only needs to keep widget keys unique across
+    callers (e.g. "us"/"india"/"crypto"/"algotest").
+    """
+
     header_col, link_col = st.columns([4, 1])
 
     with header_col:
@@ -2009,9 +2024,9 @@ def render_universe_live(prefix, title):
             c4.metric("Target 1", st_target["target1"])
             c5.metric("Risk:Reward", f"1:{st_target['risk_reward']}")
 
-            notes = st.text_input("Notes (optional)", key=f"{prefix}_park_notes_{selected}")
+            notes = st.text_input("Notes (optional)", key=f"{key_prefix}_park_notes_{selected}")
 
-            if st.button("📌 Park this trade", key=f"{prefix}_park_btn_{selected}"):
+            if st.button("📌 Park this trade", key=f"{key_prefix}_park_btn_{selected}"):
 
                 TradeJournal.park(
                     selected, status["direction"], round(status["price"], 2), st_target, status["state"], status["rsi"], notes=notes,
@@ -2040,9 +2055,9 @@ def render_universe_live(prefix, title):
             cols[3].metric("Target", r_target["target1"])
             cols[4].metric("Risk:Reward", f"1:{r_target['risk_reward']}")
 
-            reversal_notes = st.text_input("Notes (optional)", key=f"{prefix}_reversal_notes_{selected}")
+            reversal_notes = st.text_input("Notes (optional)", key=f"{key_prefix}_reversal_notes_{selected}")
 
-            if st.button("📌 Park this trade", key=f"{prefix}_reversal_park_btn_{selected}"):
+            if st.button("📌 Park this trade", key=f"{key_prefix}_reversal_park_btn_{selected}"):
 
                 TradeJournal.park(
                     selected, reversal["direction"], reversal["price"], r_target, reversal["state"], reversal["rsi"], notes=reversal_notes,
@@ -2053,8 +2068,9 @@ def render_universe_live(prefix, title):
         st.divider()
 
     # A separate Daily+Weekly read (analysis/reversal_playbook_daily.py) -
-    # for US/India, this is now the primary (only) technical read here
-    # since the 1H boxes above are Crypto-only.
+    # for US/India/stocks generally, this is the primary (only)
+    # technical read here since the 1H boxes above are for intraday-
+    # traded instruments only.
     st.subheader(f"📆 {selected} — Reversal Playbook (Daily + Weekly)")
 
     daily_reversal = DailyReversalStatusService.analyse(selected)
@@ -2075,9 +2091,9 @@ def render_universe_live(prefix, title):
         cols[3].metric("Target", dr_target["target1"])
         cols[4].metric("Risk:Reward", f"1:{dr_target['risk_reward']}")
 
-        daily_reversal_notes = st.text_input("Notes (optional)", key=f"{prefix}_daily_reversal_notes_{selected}")
+        daily_reversal_notes = st.text_input("Notes (optional)", key=f"{key_prefix}_daily_reversal_notes_{selected}")
 
-        if st.button("📌 Park this trade", key=f"{prefix}_daily_reversal_park_btn_{selected}"):
+        if st.button("📌 Park this trade", key=f"{key_prefix}_daily_reversal_park_btn_{selected}"):
 
             TradeJournal.park(
                 selected, daily_reversal["direction"], daily_reversal["price"], dr_target,
@@ -2389,6 +2405,78 @@ def render_command_center_tab():
         )
 
 
+def _classify_ticker(ticker):
+    """
+    Best-effort asset-class read from Yahoo's own ticker conventions
+    (same ones already documented in tradingview_links.py's docstring:
+    ^ prefix = index, =X suffix = forex, =F suffix = commodity/futures,
+    -USD-style suffix = crypto). Anything else - a plain symbol,
+    optionally with an exchange suffix like .NS/.BO - is a stock.
+    """
+
+    t = ticker.strip().upper()
+
+    if t.startswith("^"):
+        return "index"
+
+    if t.endswith("=X"):
+        return "currency"
+
+    if t.endswith("=F"):
+        return "commodity"
+
+    if any(t.endswith(f"-{quote}") for quote in ("USD", "USDT", "EUR", "BTC", "ETH")):
+        return "crypto"
+
+    return "stock"
+
+
+def render_algo_test_tab():
+
+    st.subheader("🧪 Algo Test — check any symbol on the fly")
+    st.caption(
+        "Type any ticker - stock, index, currency, crypto, whatever - and get the same Setup / "
+        "Reversal Playbook / Daily+Weekly readout as the scanner tabs, without it needing to already "
+        "be in a pre-scanned universe. Stocks skip Hourly (not traded intraday, same rule as the "
+        "US/India tabs) - everything else gets Hourly + Daily + Weekly."
+    )
+
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        ticker_input = st.text_input(
+            "Ticker", key="algo_test_ticker_input",
+            placeholder="e.g. AAPL, RELIANCE.NS, ^GDAXI, EURUSD=X, BTC-USD, FRA40",
+        )
+
+    with col2:
+        st.write("")
+        run = st.button("🔍 Test", key="algo_test_run_btn", use_container_width=True)
+
+    if run:
+        if ticker_input.strip():
+            st.session_state["algo_test_ticker"] = resolve_ticker(ticker_input)
+        else:
+            st.error("Enter a ticker first.")
+
+    ticker = st.session_state.get("algo_test_ticker")
+
+    if not ticker:
+        st.info("Enter a ticker above and click Test.")
+        return
+
+    asset_class = _classify_ticker(ticker)
+    show_hourly = asset_class != "stock"
+
+    st.caption(
+        f"Resolved to `{ticker}` — detected as **{asset_class}**, "
+        + ("showing Hourly + Daily + Weekly." if show_hourly else "showing Daily + Weekly only (stocks skip Hourly).")
+    )
+
+    with st.spinner(f"Analysing {ticker}..."):
+        _render_ticker_detail(ticker, show_hourly, key_prefix="algotest")
+
+
 def render_fundamentals_tab():
     """
     On-demand only, by design (see fundamental_scan.py's docstring) -
@@ -2577,8 +2665,8 @@ def main():
     # never actually scanned (stale/fake), duplicating Command Center
     # without the fix; its AI Score/chart/stock-details features had
     # no unique value the four specialized tabs don't already cover.
-    tab_command, tab_notifications, tab_position, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals = st.tabs(
-        ["🎯 Command Center", "🔔 Notifications", "📌 Position", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals"]
+    tab_command, tab_notifications, tab_position, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals, tab_algo_test = st.tabs(
+        ["🎯 Command Center", "🔔 Notifications", "📌 Position", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals", "🧪 Algo Test"]
     )
 
     with tab_command:
@@ -2604,6 +2692,9 @@ def main():
 
     with tab_fundamentals:
         render_fundamentals_tab()
+
+    with tab_algo_test:
+        render_algo_test_tab()
 
 
 if __name__ == "__main__":
