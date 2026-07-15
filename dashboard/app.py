@@ -2296,7 +2296,9 @@ def render_global_indices_movers():
     df = df.sort_values(["_closed", move_col], ascending=[True, False]).drop(columns="_closed")
 
     st.dataframe(
-        df.style.map(Scanner.color_price, subset=["15m %", "1H %"]),
+        df.style
+        .map(Scanner.color_price, subset=["15m %", "1H %"])
+        .format({"Price": "{:.2f}", "15m %": "{:+.2f}", "1H %": "{:+.2f}"}),
         use_container_width=True,
         hide_index=True,
         height=500,
