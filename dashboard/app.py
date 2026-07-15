@@ -19,12 +19,12 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from analysis import fifteen_min_readiness
+from analysis.backtester import backtest_daily, backtest_reversal_playbook, backtest_rsi_wave, backtest_weekly, summarize_trades
 from analysis.reversal_playbook import ReversalPlaybook
 from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
 from analysis.rsi_wave_strategy import RSIWaveStrategy
 from core.loader import AssetLoader
 from dashboard.services.alert_log import AlertLog
-from dashboard.services.chart_service import ChartService
 from dashboard.services.dashboard_loader import DashboardLoader
 from dashboard.services.fundamental_scan_service import FundamentalScanService
 from dashboard.services.ticker_aliases import resolve_ticker
@@ -37,7 +37,6 @@ from dashboard.services.tradingview_links import tradingview_url
 from dashboard.services.trade_journal import TradeJournal
 from dashboard.services import time_utils
 from dashboard.services import universe_cache
-from dashboard.widgets.charts import Charts
 from dashboard.widgets.header import Header
 from dashboard.widgets.market_status import MarketStatus
 from dashboard.widgets.scanner import Scanner
@@ -2347,28 +2346,125 @@ def render_algo_test_tab():
         _render_ticker_detail(ticker, show_hourly, key_prefix="algotest")
 
     st.divider()
-    st.subheader("📊 Charts")
+    st.subheader("📊 Backtest Report")
+    st.caption(
+        "Walks the FULL history (not just the current bar) and replays every signal that fired in "
+        "the window below, checking whether price actually hit target or stop first. Same stop/"
+        "target math each engine already uses live - nothing invented here. Same show_hourly rule "
+        "as above: stocks skip the Hourly backtest too."
+    )
 
-    # Short, fixed lookback windows per timeframe - this is a quick
-    # eyeball-the-candles check, not the multi-year history the
-    # engines themselves scan for wave/EMA200 state. Same show_hourly
-    # gate as the text analysis above - a stock never gets an Hourly
-    # chart here either.
     if show_hourly:
-        with st.spinner(f"Loading {ticker} 1H chart..."):
-            st.caption("🕐 Hourly (5 days)")
-            df_1h = ChartService.history(ticker, interval="1h", period="5d")
-            Charts.render(df_1h)
+        with st.spinner(f"Backtesting {ticker} Hourly signals (last 5 days)..."):
+            _render_backtest_section(
+                "🕐 Hourly — RSI Wave + Reversal Playbook (last 5 days)",
+                [backtest_rsi_wave(ticker, window_days=5), backtest_reversal_playbook(ticker, window_days=5)],
+            )
 
-    with st.spinner(f"Loading {ticker} Daily chart..."):
-        st.caption("📆 Daily (3 months)")
-        df_1d = ChartService.history(ticker, interval="1d", period="3mo")
-        Charts.render(df_1d)
+    with st.spinner(f"Backtesting {ticker} Daily signals (last 3 months)..."):
+        _render_backtest_section(
+            "📆 Daily — Reversal Playbook (last 3 months)",
+            [backtest_daily(ticker, window_days=90)],
+        )
 
-    with st.spinner(f"Loading {ticker} Weekly chart..."):
-        st.caption("🗓 Weekly (6 months)")
-        df_1w = ChartService.history(ticker, interval="1wk", period="6mo")
-        Charts.render(df_1w)
+    with st.spinner(f"Backtesting {ticker} Weekly confluence (last 6 months)..."):
+        _render_weekly_backtest_section(ticker, window_days=180)
+
+
+def _render_backtest_section(title, results):
+    """
+    results: one or more {"trades": [...], "summary": {...}} dicts
+    (e.g. the Hourly bucket combines RSI Wave + Reversal Playbook)
+    merged into a single report, newest signal first. A None entry
+    means that engine didn't have enough history for this ticker.
+    """
+
+    st.markdown(f"**{title}**")
+
+    if all(r is None for r in results):
+        st.info("Not enough history to evaluate this instrument yet.")
+        return
+
+    all_trades = []
+
+    for r in results:
+        if r:
+            all_trades.extend(r["trades"])
+
+    if not all_trades:
+        st.caption("No signals fired in this window.")
+        return
+
+    all_trades.sort(key=lambda t: t["time"], reverse=True)
+
+    summary = summarize_trades(all_trades)
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Signals", summary["total"])
+    c2.metric("Hit target", summary["hit_target"])
+    c3.metric("Hit stop", summary["hit_stop"])
+    c4.metric("Win rate", f"{summary['win_rate']}%")
+    c5.metric("Avg return", f"{summary['avg_return']:+.2f}%")
+
+    st.dataframe(
+        pd.DataFrame([
+            {
+                "Time": t["time"].strftime("%Y-%m-%d %H:%M"),
+                "Engine": t["engine"],
+                "Type": t["type"],
+                "Direction": t["direction"],
+                "Entry": round(t["entry"], 4),
+                "Stop": t["stop"],
+                "Target": t["target"],
+                "Outcome": t["outcome"],
+                "Exit Time": t["exit_time"].strftime("%Y-%m-%d %H:%M") if t["exit_time"] is not None else "—",
+                "Return %": t["return_pct"],
+            }
+            for t in all_trades
+        ]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+def _render_weekly_backtest_section(ticker, window_days):
+
+    st.markdown("**🗓 Weekly — Confluence signals (last 6 months)**")
+    st.caption(
+        "Weekly confluence (Multi-try breakout / Path C) has no stop/target anywhere in the app - "
+        "it's a confluence note, not an independently tradeable setup - so this shows the actual "
+        "price return ~4 weeks after each signal instead."
+    )
+
+    result = backtest_weekly(ticker, window_days)
+
+    if result is None:
+        st.info("Not enough Daily+Weekly history to evaluate this instrument yet.")
+        return
+
+    if not result["signals"]:
+        st.caption("No Weekly confluence signals fired in this window.")
+        return
+
+    c1, c2 = st.columns(2)
+    c1.metric("Signals", result["summary"]["total"])
+    c2.metric("Avg return (~4wk later)", f"{result['summary']['avg_return']:+.2f}%")
+
+    st.dataframe(
+        pd.DataFrame([
+            {
+                "Time": s["time"].strftime("%Y-%m-%d"),
+                "Type": s["type"],
+                "Price at signal": round(s["entry"], 4),
+                "As of": s["as_of"].strftime("%Y-%m-%d"),
+                "Return %": s["return_pct"],
+                "Status": s["status"],
+            }
+            for s in result["signals"]
+        ]),
+        use_container_width=True,
+        hide_index=True,
+    )
 
 
 def render_fundamentals_tab():
