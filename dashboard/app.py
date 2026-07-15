@@ -2365,20 +2365,27 @@ def render_command_center_tab():
     if not_scanned:
         st.info("Not yet scanned this session: " + ", ".join(not_scanned) + " — visit those tabs at least once to include them here.")
 
-    if not rows:
+    if rows:
+
+        combined = pd.DataFrame(rows)
+
+        st.dataframe(
+            combined,
+            use_container_width=True,
+            hide_index=True,
+            height=600,
+            column_config={"Why": st.column_config.TextColumn("Why", width=520)},
+        )
+
+    else:
         st.success("Nothing actionable right now across the tabs scanned so far.")
-        return
 
-    combined = pd.DataFrame(rows)
-
-    st.dataframe(
-        combined,
-        use_container_width=True,
-        hide_index=True,
-        height=600,
-        column_config={"Why": st.column_config.TextColumn("Why", width=520)},
-    )
-
+    # Deliberately NOT gated behind "rows" above (an early return here
+    # used to skip everything below whenever there was nothing in the
+    # narrow "act now" set, including the broader Everything-Found
+    # section and the Movers section below, even though both read from
+    # completely independent data and can easily be non-empty when
+    # "rows" isn't).
     st.divider()
     st.subheader("📋 Everything Found — by Timeframe, All Tabs")
     st.caption(
@@ -2404,6 +2411,37 @@ def render_command_center_tab():
         Scanner.render(
             table_df, default_sort=signal_columns[0][0], key_prefix=key_prefix, compact=False,
             columns=columns, title=title, height=300,
+        )
+
+    st.divider()
+    st.subheader("📈 Global Indices — Movers")
+    st.caption(
+        "Every Global Indices instrument, not just ones with an active Setup/Reversal signal - so you "
+        "can see where the actual move is right now, not just where the algo has already flagged something."
+    )
+
+    global_market = st.session_state.get("global_market")
+
+    if global_market is None or global_market["df"].empty:
+        st.info("Global Indices hasn't been scanned yet this session - visit that tab to load it.")
+    else:
+
+        timeframe_choice = st.radio(
+            "Sort by", ["15m", "1H"], horizontal=True, key="command_center_movers_timeframe",
+        )
+        move_col = "15m %" if timeframe_choice == "15m" else "1H %"
+
+        # key_prefix changes with the radio choice on purpose - Scanner's
+        # own sort selectbox only honors default_sort the first time a
+        # given widget key is created, so keeping one fixed key_prefix
+        # here would silently ignore switching the timeframe after the
+        # first render.
+        Scanner.render(
+            global_market["df"], default_sort=move_col, key_prefix=f"command_center_movers_{timeframe_choice}",
+            compact=False,
+            columns=["Status", "Ticker", "Name", "Price", "15m %", "1H %"],
+            title=f"All Global Indices — sorted by {timeframe_choice} move",
+            height=500,
         )
 
 
