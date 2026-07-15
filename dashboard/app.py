@@ -24,6 +24,7 @@ from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
 from analysis.rsi_wave_strategy import RSIWaveStrategy
 from core.loader import AssetLoader
 from dashboard.services.alert_log import AlertLog
+from dashboard.services.chart_service import ChartService
 from dashboard.services.dashboard_loader import DashboardLoader
 from dashboard.services.fundamental_scan_service import FundamentalScanService
 from dashboard.services.positions import Positions, resolve_ticker
@@ -36,6 +37,7 @@ from dashboard.services.tradingview_links import tradingview_url
 from dashboard.services.trade_journal import TradeJournal
 from dashboard.services import time_utils
 from dashboard.services import universe_cache
+from dashboard.widgets.charts import Charts
 from dashboard.widgets.header import Header
 from dashboard.widgets.market_status import MarketStatus
 from dashboard.widgets.scanner import Scanner
@@ -2475,6 +2477,30 @@ def render_algo_test_tab():
 
     with st.spinner(f"Analysing {ticker}..."):
         _render_ticker_detail(ticker, show_hourly, key_prefix="algotest")
+
+    st.divider()
+    st.subheader("📊 Charts")
+
+    # Short, fixed lookback windows per timeframe - this is a quick
+    # eyeball-the-candles check, not the multi-year history the
+    # engines themselves scan for wave/EMA200 state. Same show_hourly
+    # gate as the text analysis above - a stock never gets an Hourly
+    # chart here either.
+    if show_hourly:
+        with st.spinner(f"Loading {ticker} 1H chart..."):
+            st.caption("🕐 Hourly (5 days)")
+            df_1h = ChartService.history(ticker, interval="1h", period="5d")
+            Charts.render(df_1h)
+
+    with st.spinner(f"Loading {ticker} Daily chart..."):
+        st.caption("📆 Daily (3 months)")
+        df_1d = ChartService.history(ticker, interval="1d", period="3mo")
+        Charts.render(df_1d)
+
+    with st.spinner(f"Loading {ticker} Weekly chart..."):
+        st.caption("🗓 Weekly (6 months)")
+        df_1w = ChartService.history(ticker, interval="1wk", period="6mo")
+        Charts.render(df_1w)
 
 
 def render_fundamentals_tab():
