@@ -2228,6 +2228,20 @@ def render_command_center_tab():
         )
 
     st.divider()
+    render_global_indices_movers()
+
+
+@st.fragment(run_every=60)
+def render_global_indices_movers():
+    """
+    Its own fragment on a 1-minute timer, deliberately separate from
+    Command Center's own 20s fragment above - re-rendering just this
+    table off already-cached session state (no new fetch either way)
+    is cheap, but nesting it means a tick here doesn't force the
+    heavier "act now"/"Everything Found" aggregation above to redraw
+    too, and vice versa.
+    """
+
     st.subheader("📈 Global Indices — Movers")
     st.caption(
         "Every Global Indices instrument, not just ones with an active Setup/Reversal signal - so you "
@@ -2238,25 +2252,27 @@ def render_command_center_tab():
 
     if global_market is None or global_market["df"].empty:
         st.info("Global Indices hasn't been scanned yet this session - visit that tab to load it.")
-    else:
+        return
 
-        timeframe_choice = st.radio(
-            "Sort by", ["15m", "1H"], horizontal=True, key="command_center_movers_timeframe",
-        )
-        move_col = "15m %" if timeframe_choice == "15m" else "1H %"
+    timeframe_choice = st.radio(
+        "Sort by", ["15m", "1H"], horizontal=True, key="command_center_movers_timeframe",
+    )
+    move_col = "15m %" if timeframe_choice == "15m" else "1H %"
 
-        # key_prefix changes with the radio choice on purpose - Scanner's
-        # own sort selectbox only honors default_sort the first time a
-        # given widget key is created, so keeping one fixed key_prefix
-        # here would silently ignore switching the timeframe after the
-        # first render.
-        Scanner.render(
-            global_market["df"], default_sort=move_col, key_prefix=f"command_center_movers_{timeframe_choice}",
-            compact=False,
-            columns=["Status", "Ticker", "Name", "Price", "15m %", "1H %"],
-            title=f"All Global Indices — sorted by {timeframe_choice} move",
-            height=500,
-        )
+    # key_prefix changes with the radio choice on purpose - Scanner's
+    # own sort selectbox only honors default_sort the first time a
+    # given widget key is created, so keeping one fixed key_prefix
+    # here would silently ignore switching the timeframe after the
+    # first render.
+    Scanner.render(
+        global_market["df"], default_sort=move_col, key_prefix=f"command_center_movers_{timeframe_choice}",
+        compact=False,
+        columns=["Status", "Ticker", "Name", "Price", "15m %", "1H %"],
+        title=f"All Global Indices — sorted by {timeframe_choice} move",
+        height=500,
+    )
+
+    st.caption(f"🕐 Last updated: {time_utils.now_cet().strftime('%H:%M:%S CET')} — refreshes every minute")
 
 
 def _classify_ticker(ticker):
