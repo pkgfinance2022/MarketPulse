@@ -2098,8 +2098,27 @@ def _command_center_timeframe(base_timeframe, why_text):
     return base_timeframe
 
 
-@st.fragment(run_every=UNIVERSE_POLL_SECONDS)
 def render_command_center_tab():
+    """
+    Plain (non-fragment) shell that calls two independent, sibling
+    top-level fragments below - _render_command_center_signals() (20s)
+    and render_global_indices_movers() (60s). NOT nested (a fragment
+    called from inside another fragment) - that combination raised a
+    FragmentHandledException in production specifically on the inner
+    fragment's own scheduled auto-rerun tick (a code path this app's
+    test suite never exercised, since AppTest only drives explicit
+    .run() calls, not a fragment's real run_every timer). Two sibling
+    top-level fragments is the same proven pattern already used
+    everywhere else in this app.
+    """
+
+    _render_command_center_signals()
+    st.divider()
+    render_global_indices_movers()
+
+
+@st.fragment(run_every=UNIVERSE_POLL_SECONDS)
+def _render_command_center_signals():
     """
     Pulls together every currently-actionable row (a fresh RSI Wave
     entry, or a BUY/SELL Reversal Playbook signal - 1H or Daily+Weekly)
@@ -2225,9 +2244,6 @@ def render_command_center_tab():
             table_df, default_sort=signal_columns[0][0], key_prefix=key_prefix, compact=False,
             columns=columns, title=title, height=300,
         )
-
-    st.divider()
-    render_global_indices_movers()
 
 
 @st.fragment(run_every=60)
