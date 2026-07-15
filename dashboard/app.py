@@ -354,6 +354,16 @@ REVERSAL_SIGNAL_LABELS = {
     "SELL_SIGNAL_CONTINUATION": "SELL (continuation)",
 }
 
+# Weekly confluence (analysis/reversal_playbook_daily.py) is
+# bullish-breakout-only - no SELL side - so every actionable state here
+# is a LONG. PATH_C_FORMING is deliberately excluded, same as the Daily/
+# 1H engines only notifying once a setup is forming->confirmed, not
+# while forming.
+WEEKLY_SIGNAL_LABELS = {
+    "MULTI_TRY_BREAKOUT": "Multi-try breakout",
+    "PATH_C_CONFIRMED": "Path C confirmed",
+}
+
 
 @st.fragment(run_every=300)
 def check_for_new_reversal_signals():
@@ -1083,6 +1093,8 @@ def render_notifications_feed():
 
             with time_col:
                 st.caption(_humanize_alert_age(row["_ts"]))
+                if pd.notna(row["_ts"]):
+                    st.caption(row["_ts"].strftime("%b %d, %H:%M CET"))
 
 
 def render_notifications_tab():
@@ -1514,6 +1526,8 @@ def _ensure_universe_state(prefix):
         f"{prefix}_wave_states_seeded": False,
         f"{prefix}_reversal_states": {},
         f"{prefix}_reversal_states_seeded": False,
+        f"{prefix}_daily_reversal_states": {},
+        f"{prefix}_daily_reversal_states_seeded": False,
         f"{prefix}_last_loaded_ts": 0,
         f"{prefix}_seen_cache_ts": 0,
     }
@@ -1545,6 +1559,7 @@ def _scan_universe_data(country):
 
     wave_states = {}
     reversal_states = {}
+    daily_reversal_states = {}
 
     if not df.empty:
 
@@ -1584,65 +1599,120 @@ def _scan_universe_data(country):
         "failed": failed,
         "wave_states": wave_states,
         "reversal_states": reversal_states,
+        "daily_reversal_states": daily_reversal_states,
     }
 
 
-def _notify_universe_changes(prefix, name_map, wave_states, reversal_states):
+def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, daily_reversal_states):
     """
     Same new-entry / new-signal diffing as check_for_new_entries() /
     check_for_new_reversal_signals(), generalized across the three
     stock/crypto universes. On the very first load (nothing seeded
     yet), whatever is already active isn't NEW - just record the
     baseline silently, same reasoning as the Global Indices tab.
+
+    Hourly (RSI Wave entry / 1H Reversal Playbook) alerts only fire for
+    Crypto - US/India aren't traded intraday and don't get an Hourly
+    view anywhere else in the app (see render_universe_live's
+    show_hourly gate), so notifying on hourly noise for those two would
+    just be alert fatigue for a timeframe the user doesn't even look
+    at. Daily Reversal and Weekly confluence notifications fire for all
+    three universes below, since that's the timeframe the US/India tabs
+    actually show.
     """
 
-    previous_wave = st.session_state[f"{prefix}_wave_states"]
-    is_first_wave_check = not st.session_state[f"{prefix}_wave_states_seeded"]
+    if prefix == "crypto":
 
-    new_entries = (
-        []
-        if is_first_wave_check
-        else [
-            {
-                "ticker": ticker,
-                "name": name_map.get(ticker, ticker),
-                "direction": "LONG" if info["state"] == "ENTRY_LONG" else "SHORT",
-                "price": info["price"],
-                "rsi": info["rsi"],
-            }
-            for ticker, info in wave_states.items()
-            if info["state"] in ("ENTRY_LONG", "ENTRY_SHORT")
-            and (previous_wave.get(ticker) or {}).get("state") != info["state"]
-        ]
-    )
+        previous_wave = st.session_state[f"{prefix}_wave_states"]
+        is_first_wave_check = not st.session_state[f"{prefix}_wave_states_seeded"]
 
-    for entry in new_entries:
-
-        # Cross-session, cross-restart dedup - see check_for_new_entries().
-        if AlertLog.recently_logged(entry["ticker"], entry["direction"]):
-            continue
-
-        icon = "🟢" if entry["direction"] == "LONG" else "🔴"
-
-        full_status = RSIWaveStatusService.analyse(entry["ticker"], period="730d")
-        stop_target = full_status["stop_target"] if full_status else None
-
-        # Telegram deliberately NOT sent here - only Global Indices
-        # notifies by Telegram (check_for_new_entries above). US/India/
-        # Crypto still toast in-browser and log to Alert Tracking, just
-        # without pinging the phone for every one of ~250 symbols.
-        st.toast(f"{entry['direction']} entry: {entry['name']}", icon=icon)
-
-        AlertLog.log_alert(
-            entry["ticker"], entry["name"], entry["direction"], entry["price"], entry["rsi"], stop_target,
+        new_entries = (
+            []
+            if is_first_wave_check
+            else [
+                {
+                    "ticker": ticker,
+                    "name": name_map.get(ticker, ticker),
+                    "direction": "LONG" if info["state"] == "ENTRY_LONG" else "SHORT",
+                    "price": info["price"],
+                    "rsi": info["rsi"],
+                }
+                for ticker, info in wave_states.items()
+                if info["state"] in ("ENTRY_LONG", "ENTRY_SHORT")
+                and (previous_wave.get(ticker) or {}).get("state") != info["state"]
+            ]
         )
 
-    previous_reversal = st.session_state[f"{prefix}_reversal_states"]
-    is_first_reversal_check = not st.session_state[f"{prefix}_reversal_states_seeded"]
+        for entry in new_entries:
 
-    new_signals = (
+            # Cross-session, cross-restart dedup - see check_for_new_entries().
+            if AlertLog.recently_logged(entry["ticker"], entry["direction"]):
+                continue
+
+            icon = "🟢" if entry["direction"] == "LONG" else "🔴"
+
+            full_status = RSIWaveStatusService.analyse(entry["ticker"], period="730d")
+            stop_target = full_status["stop_target"] if full_status else None
+
+            # Telegram deliberately NOT sent here - only Global Indices
+            # notifies by Telegram (check_for_new_entries above). Crypto
+            # still toasts in-browser and logs to Alert Tracking, just
+            # without pinging the phone for every one of ~250 symbols.
+            st.toast(f"{entry['direction']} entry: {entry['name']}", icon=icon)
+
+            AlertLog.log_alert(
+                entry["ticker"], entry["name"], entry["direction"], entry["price"], entry["rsi"], stop_target,
+            )
+
+        previous_reversal = st.session_state[f"{prefix}_reversal_states"]
+        is_first_reversal_check = not st.session_state[f"{prefix}_reversal_states_seeded"]
+
+        new_signals = (
+            []
+            if is_first_reversal_check
+            else [
+                {
+                    "ticker": ticker,
+                    "name": name_map.get(ticker, ticker),
+                    "direction": REVERSAL_SIGNAL_DIRECTIONS[info["state"]],
+                    "state": info["state"],
+                    "price": info["price"],
+                    "rsi": info["rsi"],
+                }
+                for ticker, info in reversal_states.items()
+                if info["state"] in REVERSAL_SIGNAL_DIRECTIONS
+                and (previous_reversal.get(ticker) or {}).get("state") != info["state"]
+            ]
+        )
+
+        for signal in new_signals:
+
+            # Cross-session, cross-restart dedup - see check_for_new_entries().
+            if AlertLog.recently_logged(signal["ticker"], signal["direction"]):
+                continue
+
+            icon = "🟢" if signal["direction"] == "LONG" else "🔴"
+            signal_label = REVERSAL_SIGNAL_LABELS.get(signal["state"], signal["state"])
+
+            full_status = ReversalStatusService.analyse(signal["ticker"])
+            stop_target = full_status["stop_target"] if full_status else None
+
+            # Telegram deliberately NOT sent here - only Global Indices
+            # notifies by Telegram. Crypto still toasts in-browser and
+            # logs to Alert Tracking, just without pinging the phone for
+            # every one of ~250 symbols.
+            st.toast(f"{signal_label}: {signal['name']}", icon=icon)
+
+            AlertLog.log_alert(
+                signal["ticker"], signal["name"], signal["direction"], signal["price"], signal["rsi"], stop_target,
+            )
+
+    previous_daily = st.session_state[f"{prefix}_daily_reversal_states"]
+    is_first_daily_check = not st.session_state[f"{prefix}_daily_reversal_states_seeded"]
+
+    new_daily_signals = (
         []
-        if is_first_reversal_check
+        if is_first_daily_check
         else [
             {
                 "ticker": ticker,
@@ -1652,13 +1722,13 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states):
                 "price": info["price"],
                 "rsi": info["rsi"],
             }
-            for ticker, info in reversal_states.items()
+            for ticker, info in daily_reversal_states.items()
             if info["state"] in REVERSAL_SIGNAL_DIRECTIONS
-            and (previous_reversal.get(ticker) or {}).get("state") != info["state"]
+            and (previous_daily.get(ticker) or {}).get("state") != info["state"]
         ]
     )
 
-    for signal in new_signals:
+    for signal in new_daily_signals:
 
         # Cross-session, cross-restart dedup - see check_for_new_entries().
         if AlertLog.recently_logged(signal["ticker"], signal["direction"]):
@@ -1667,17 +1737,44 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states):
         icon = "🟢" if signal["direction"] == "LONG" else "🔴"
         signal_label = REVERSAL_SIGNAL_LABELS.get(signal["state"], signal["state"])
 
-        full_status = ReversalStatusService.analyse(signal["ticker"])
+        full_status = DailyReversalStatusService.analyse(signal["ticker"])
         stop_target = full_status["stop_target"] if full_status else None
 
-        # Telegram deliberately NOT sent here - only Global Indices
-        # notifies by Telegram. US/India/Crypto still toast in-browser
-        # and log to Alert Tracking, just without pinging the phone for
-        # every one of ~250 symbols.
-        st.toast(f"{signal_label}: {signal['name']}", icon=icon)
+        st.toast(f"{signal_label} (Daily): {signal['name']}", icon=icon)
 
         AlertLog.log_alert(
             signal["ticker"], signal["name"], signal["direction"], signal["price"], signal["rsi"], stop_target,
+        )
+
+    new_weekly_signals = (
+        []
+        if is_first_daily_check
+        else [
+            {
+                "ticker": ticker,
+                "name": name_map.get(ticker, ticker),
+                "state": info["weekly_state"],
+                "price": info["price"],
+                "rsi": info["rsi"],
+            }
+            for ticker, info in daily_reversal_states.items()
+            if info["weekly_state"] in WEEKLY_SIGNAL_LABELS
+            and (previous_daily.get(ticker) or {}).get("weekly_state") != info["weekly_state"]
+        ]
+    )
+
+    for signal in new_weekly_signals:
+
+        # Weekly confluence is LONG-only - see WEEKLY_SIGNAL_LABELS.
+        if AlertLog.recently_logged(signal["ticker"], "LONG"):
+            continue
+
+        signal_label = WEEKLY_SIGNAL_LABELS[signal["state"]]
+
+        st.toast(f"{signal_label} (Weekly): {signal['name']}", icon="🟢")
+
+        AlertLog.log_alert(
+            signal["ticker"], signal["name"], "LONG", signal["price"], signal["rsi"], None,
         )
 
 
@@ -1727,7 +1824,7 @@ def _refresh_universe_body(prefix, country):
         result_df = result["df"]
         name_map = dict(zip(result_df["Ticker"], result_df["Name"])) if not result_df.empty else {}
 
-        _notify_universe_changes(prefix, name_map, result["wave_states"], result["reversal_states"])
+        _notify_universe_changes(prefix, name_map, result["wave_states"], result["reversal_states"], result["daily_reversal_states"])
 
         st.session_state[f"{prefix}_market"] = {"df": result_df, "success": result["success"], "failed": result["failed"]}
 
@@ -1738,6 +1835,8 @@ def _refresh_universe_body(prefix, country):
         st.session_state[f"{prefix}_wave_states_seeded"] = True
         st.session_state[f"{prefix}_reversal_states"] = result["reversal_states"]
         st.session_state[f"{prefix}_reversal_states_seeded"] = True
+        st.session_state[f"{prefix}_daily_reversal_states"] = result["daily_reversal_states"]
+        st.session_state[f"{prefix}_daily_reversal_states_seeded"] = True
         st.session_state[f"{prefix}_last_loaded_ts"] = cache_entry["ts"]
         st.session_state[seen_ts_key] = cache_entry["ts"]
 
@@ -2046,10 +2145,10 @@ COMMAND_CENTER_SOURCES = [
 ]
 
 COMMAND_CENTER_COLUMNS = [
-    # column, full-text column, base timeframe, keywords that identify an "act now" label (vs. watching/alert/forming)
-    ("Setup", "Setup Full", "Hourly", ("entry",)),
-    ("Reversal", "Reversal Full", "Hourly", ("signal", "trigger", "continuation")),
-    ("Daily Reversal", "Daily Reversal Full", "Daily", ("signal", "trigger", "continuation")),
+    # column, full-text column, timestamp column, base timeframe, keywords that identify an "act now" label (vs. watching/alert/forming)
+    ("Setup", "Setup Full", "Setup Timestamp", "Hourly", ("entry",)),
+    ("Reversal", "Reversal Full", "Reversal Timestamp", "Hourly", ("signal", "trigger", "continuation")),
+    ("Daily Reversal", "Daily Reversal Full", "Daily Reversal Timestamp", "Daily", ("signal", "trigger", "continuation")),
 ]
 
 # US/India aren't traded intraday (see render_universe_live's
@@ -2199,7 +2298,7 @@ def render_command_center_tab():
         if df.empty:
             continue
 
-        for column, full_col, base_timeframe, keywords in COMMAND_CENTER_COLUMNS:
+        for column, full_col, ts_col, base_timeframe, keywords in COMMAND_CENTER_COLUMNS:
 
             if column not in df.columns:
                 continue
@@ -2226,6 +2325,7 @@ def render_command_center_tab():
                         "Timeframe": _command_center_timeframe(base_timeframe, why),
                         "Signal Type": column,
                         "Signal": row[column],
+                        "When": row.get(ts_col, "—"),
                         "Why": why,
                     }
                 )
