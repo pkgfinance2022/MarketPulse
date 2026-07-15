@@ -27,7 +27,7 @@ from dashboard.services.alert_log import AlertLog
 from dashboard.services.chart_service import ChartService
 from dashboard.services.dashboard_loader import DashboardLoader
 from dashboard.services.fundamental_scan_service import FundamentalScanService
-from dashboard.services.positions import Positions, resolve_ticker
+from dashboard.services.ticker_aliases import resolve_ticker
 from dashboard.services.reversal_status import ReversalStatusService
 from dashboard.services.reversal_status_daily import DailyReversalStatusService
 from dashboard.services.rsi_wave_status import RSIWaveStatusService
@@ -1159,192 +1159,6 @@ def render_alert_tracking():
         use_container_width=True,
         hide_index=True,
     )
-
-
-def render_position_form():
-
-    st.subheader("📝 Log a position")
-
-    with st.form("new_position_form", clear_on_submit=True):
-
-        c1, c2 = st.columns(2)
-
-        with c1:
-            ticker_input = st.text_input("Ticker (e.g. FRA40, ^GDAXI, AAPL, BTC-USD)")
-            direction_label = st.radio("Direction", ["Sell / Short", "Buy / Long"], horizontal=True)
-
-        with c2:
-            entry = st.number_input("Entry price", min_value=0.0, step=0.01, format="%.4f")
-            stop = st.number_input("Stop", min_value=0.0, step=0.01, format="%.4f")
-
-        c3, c4 = st.columns(2)
-
-        with c3:
-            target1 = st.number_input("Target", min_value=0.0, step=0.01, format="%.4f")
-
-        with c4:
-            target2 = st.number_input("Target 2 (optional)", min_value=0.0, step=0.01, format="%.4f")
-
-        c5, c6 = st.columns(2)
-
-        with c5:
-            size = st.number_input(
-                "Size (capital committed)", min_value=0.0, step=10.0,
-                help="How much you actually put in - same currency you think in, no conversion.",
-            )
-
-        with c6:
-            leverage = st.number_input("Leverage", min_value=1.0, value=1.0, step=1.0)
-
-        notes = st.text_input("Notes (optional)")
-
-        submitted = st.form_submit_button("📌 Start following this position")
-
-        if submitted:
-            if not ticker_input.strip():
-                st.error("Enter a ticker first.")
-            else:
-                rr = Positions.open_position(
-                    ticker=ticker_input,
-                    direction="SHORT" if direction_label.startswith("Sell") else "LONG",
-                    entry=entry,
-                    stop=stop,
-                    target1=target1,
-                    size=size,
-                    leverage=leverage,
-                    target2=target2 if target2 else None,
-                    notes=notes,
-                )
-                st.toast(f"Following {resolve_ticker(ticker_input)} now.", icon="📌")
-
-                if rr is not None:
-                    max_loss = size * leverage * abs(entry - stop) / entry if entry else 0
-                    max_gain = size * leverage * abs(target1 - entry) / entry if entry else 0
-                    msg = f"Risk:Reward {rr}:1 — max loss ≈ {max_loss:.2f}, max gain to target ≈ {max_gain:.2f}"
-                    if rr < 1:
-                        st.warning(f"⚠️ {msg} (risking more than the target — worth a second look)")
-                    else:
-                        st.info(msg)
-
-
-@st.fragment(run_every=15)
-def render_open_positions():
-    """
-    The fast-refreshing half of the Positions tab - its own 15s timer,
-    independent of every other tab's fragment (Global Indices' 45s/20s,
-    the universe tabs' hourly cadence, etc.), since a live trade needs
-    tighter monitoring than routine scans. evaluate() writes straight
-    back to the CSV every tick, so a position's outcome is never only
-    sitting in memory - a reboot won't lose it.
-    """
-
-    df = Positions.evaluate()
-
-    open_df = df[df["Status"] == "OPEN"] if not df.empty else df
-    open_df = open_df.sort_values("OpenedAt", ascending=False)
-
-    if open_df.empty:
-        st.caption("No open positions. Log one above to start following it.")
-        return
-
-    st.caption(f"🔴 Live — refreshes every 15s ({len(open_df)} open)")
-
-    for idx, row in open_df.iterrows():
-
-        cols = st.columns([2, 1, 1, 1, 1, 1])
-
-        cols[0].markdown(f"**{row['Ticker']}** ({row['Direction']})")
-        cols[1].metric("Entry", f"{row['Entry']:.4f}")
-        cols[2].metric("Stop", f"{row['Stop']:.4f}")
-        cols[3].metric("Target", f"{row['Target1']:.4f}" if pd.notna(row["Target1"]) else "—")
-
-        pnl = row.get("PnL")
-        cols[4].metric("P&L", f"{float(pnl):+.2f}" if pd.notna(pnl) else "—")
-
-        if cols[5].button("✅ Close now", key=f"close_position_{idx}"):
-            # No st.rerun() here - clicking a widget inside a fragment
-            # already reruns just that fragment on its own; an extra
-            # explicit rerun on top of that raced against this
-            # fragment's own 15s timer and made the click occasionally
-            # look like it did nothing.
-            if not Positions.close_manually(idx):
-                st.error("Couldn't fetch a current price to close at - try again in a moment.")
-
-        return_pct = row["ReturnPct"]
-        leveraged_pct = row.get("LeveragedReturnPct")
-        return_line = f"Return: {float(return_pct):+.2f}%" if pd.notna(return_pct) else "Return: —"
-        if pd.notna(leveraged_pct) and float(leveraged_pct) != float(return_pct or 0):
-            return_line += f" (leveraged: {float(leveraged_pct):+.2f}%)"
-        st.caption(return_line)
-
-        live_note = row.get("LiveNote")
-        if pd.notna(live_note) and live_note:
-            st.caption(f"🤖 {live_note}")
-
-        notes = row.get("Notes")
-        if pd.notna(notes) and notes:
-            st.caption(f"📝 {notes}")
-
-        st.divider()
-
-
-def render_position_history():
-
-    st.subheader("📜 Position history")
-
-    df = Positions.load()
-    closed_df = df[df["Status"] != "OPEN"] if not df.empty else df
-
-    if closed_df.empty:
-        st.caption("No closed positions yet.")
-        return
-
-    stats = Positions.summary(df)
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Closed", len(closed_df))
-    c2.metric("Hit target", stats["hit_target"])
-    c3.metric("Hit stop", stats["hit_stop"])
-    c4.metric("Win rate", f"{stats['win_rate']}%")
-    c5.metric("Total P&L", f"{stats['total_pnl']:+.2f}")
-
-    display_cols = [
-        "Ticker", "Direction", "Entry", "Stop", "Target1", "Size", "Leverage", "OpenedAt",
-        "Status", "ClosedPrice", "ClosedAt", "ReturnPct", "LeveragedReturnPct", "PnL", "Comment", "Notes",
-    ]
-
-    st.dataframe(
-        closed_df[display_cols].sort_values("ClosedAt", ascending=False),
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    remove_idx = st.selectbox(
-        "Remove a row (cleanup only, no effect on live tracking)",
-        options=["—"] + closed_df.index.tolist(),
-        format_func=lambda i: "—" if i == "—" else f"{closed_df.at[i, 'Ticker']} — {closed_df.at[i, 'ClosedAt']}",
-        key="position_remove_select",
-    )
-
-    if remove_idx != "—" and st.button("🗑️ Remove selected row", key="position_remove_btn"):
-        Positions.remove(remove_idx)
-        st.rerun()
-
-
-def render_position_tab():
-
-    st.subheader("🎯 Position — Live Tracking")
-    st.caption(
-        "Manually log a trade you've actually taken and this follows it: live return, "
-        "distance to stop/target, and a durable history you can analyse later. Only "
-        "this tab refreshes fast (every 15s) - other tabs keep their own cadence."
-    )
-
-    render_position_form()
-    st.divider()
-    render_open_positions()
-    st.divider()
-    render_position_history()
 
 
 ALERT_TYPE_MEANINGS = {
@@ -2729,8 +2543,8 @@ def main():
     # never actually scanned (stale/fake), duplicating Command Center
     # without the fix; its AI Score/chart/stock-details features had
     # no unique value the four specialized tabs don't already cover.
-    tab_command, tab_notifications, tab_position, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals, tab_algo_test = st.tabs(
-        ["🎯 Command Center", "🔔 Notifications", "📌 Position", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals", "🧪 Algo Test"]
+    tab_command, tab_notifications, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals, tab_algo_test = st.tabs(
+        ["🎯 Command Center", "🔔 Notifications", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals", "🧪 Algo Test"]
     )
 
     with tab_command:
@@ -2738,9 +2552,6 @@ def main():
 
     with tab_notifications:
         render_notifications_tab()
-
-    with tab_position:
-        render_position_tab()
 
     with tab_global:
         render_global_indices_tab(meta)
