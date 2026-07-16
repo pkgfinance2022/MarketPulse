@@ -368,6 +368,10 @@ WEEKLY_SIGNAL_LABELS = {
     "PATH_C_CONFIRMED": "Path C confirmed",
 }
 
+# Crypto notifications are noisy across ~250 symbols of wildly varying
+# quality/liquidity - only Bitcoin is worth an alert.
+CRYPTO_ALERT_TICKER = "BTC-USD"
+
 
 @st.fragment(run_every=300)
 def check_for_new_reversal_signals():
@@ -1468,7 +1472,8 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
                     "rsi": info["rsi"],
                 }
                 for ticker, info in wave_states.items()
-                if info["state"] in ("ENTRY_LONG", "ENTRY_SHORT")
+                if ticker == CRYPTO_ALERT_TICKER
+                and info["state"] in ("ENTRY_LONG", "ENTRY_SHORT")
                 and (previous_wave.get(ticker) or {}).get("state") != info["state"]
             ]
         )
@@ -1480,15 +1485,26 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
                 continue
 
             icon = "🟢" if entry["direction"] == "LONG" else "🔴"
+            price = round(entry["price"], 2) if entry["price"] is not None else "?"
+            rsi = entry["rsi"] if entry["rsi"] is not None else "?"
+            event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
 
             full_status = RSIWaveStatusService.analyse(entry["ticker"], period="730d")
             stop_target = full_status["stop_target"] if full_status else None
 
-            # Telegram deliberately NOT sent here - only Global Indices
-            # notifies by Telegram (check_for_new_entries above). Crypto
-            # still toasts in-browser and logs to Alert Tracking, just
-            # without pinging the phone for every one of ~250 symbols.
+            levels = (
+                f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
+                if stop_target
+                else ""
+            )
+
             st.toast(f"{entry['direction']} entry: {entry['name']}", icon=icon)
+
+            if TelegramNotifier.is_configured():
+                TelegramNotifier.send(
+                    f"{icon} {entry['name']} ({entry['ticker']}) — {entry['direction']} entry (RSI Wave)\n"
+                    f"{event_time}\nPrice {price} · RSI {rsi}{levels}"
+                )
 
             AlertLog.log_alert(
                 entry["ticker"], entry["name"], entry["direction"], entry["price"], entry["rsi"], stop_target,
@@ -1510,7 +1526,8 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
                     "rsi": info["rsi"],
                 }
                 for ticker, info in reversal_states.items()
-                if info["state"] in REVERSAL_SIGNAL_DIRECTIONS
+                if ticker == CRYPTO_ALERT_TICKER
+                and info["state"] in REVERSAL_SIGNAL_DIRECTIONS
                 and (previous_reversal.get(ticker) or {}).get("state") != info["state"]
             ]
         )
@@ -1523,15 +1540,26 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
 
             icon = "🟢" if signal["direction"] == "LONG" else "🔴"
             signal_label = REVERSAL_SIGNAL_LABELS.get(signal["state"], signal["state"])
+            price = round(signal["price"], 2) if signal["price"] is not None else "?"
+            rsi = signal["rsi"] if signal["rsi"] is not None else "?"
+            event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
 
             full_status = ReversalStatusService.analyse(signal["ticker"])
             stop_target = full_status["stop_target"] if full_status else None
 
-            # Telegram deliberately NOT sent here - only Global Indices
-            # notifies by Telegram. Crypto still toasts in-browser and
-            # logs to Alert Tracking, just without pinging the phone for
-            # every one of ~250 symbols.
+            levels = (
+                f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
+                if stop_target
+                else ""
+            )
+
             st.toast(f"{signal_label}: {signal['name']}", icon=icon)
+
+            if TelegramNotifier.is_configured():
+                TelegramNotifier.send(
+                    f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (Reversal Playbook)\n"
+                    f"{event_time}\nPrice {price} · RSI {rsi}{levels}"
+                )
 
             AlertLog.log_alert(
                 signal["ticker"], signal["name"], signal["direction"], signal["price"], signal["rsi"], stop_target,
@@ -1553,7 +1581,8 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
                 "rsi": info["rsi"],
             }
             for ticker, info in daily_reversal_states.items()
-            if info["state"] in REVERSAL_SIGNAL_DIRECTIONS
+            if (prefix != "crypto" or ticker == CRYPTO_ALERT_TICKER)
+            and info["state"] in REVERSAL_SIGNAL_DIRECTIONS
             and (previous_daily.get(ticker) or {}).get("state") != info["state"]
         ]
     )
@@ -1566,11 +1595,26 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
 
         icon = "🟢" if signal["direction"] == "LONG" else "🔴"
         signal_label = REVERSAL_SIGNAL_LABELS.get(signal["state"], signal["state"])
+        price = round(signal["price"], 2) if signal["price"] is not None else "?"
+        rsi = signal["rsi"] if signal["rsi"] is not None else "?"
+        event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
 
         full_status = DailyReversalStatusService.analyse(signal["ticker"])
         stop_target = full_status["stop_target"] if full_status else None
 
+        levels = (
+            f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
+            if stop_target
+            else ""
+        )
+
         st.toast(f"{signal_label} (Daily): {signal['name']}", icon=icon)
+
+        if TelegramNotifier.is_configured():
+            TelegramNotifier.send(
+                f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (Daily)\n"
+                f"{event_time}\nPrice {price} · RSI {rsi}{levels}"
+            )
 
         AlertLog.log_alert(
             signal["ticker"], signal["name"], signal["direction"], signal["price"], signal["rsi"], stop_target,
@@ -1588,7 +1632,8 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
                 "rsi": info["rsi"],
             }
             for ticker, info in daily_reversal_states.items()
-            if info["weekly_state"] in WEEKLY_SIGNAL_LABELS
+            if (prefix != "crypto" or ticker == CRYPTO_ALERT_TICKER)
+            and info["weekly_state"] in WEEKLY_SIGNAL_LABELS
             and (previous_daily.get(ticker) or {}).get("weekly_state") != info["weekly_state"]
         ]
     )
@@ -1600,8 +1645,17 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
             continue
 
         signal_label = WEEKLY_SIGNAL_LABELS[signal["state"]]
+        price = round(signal["price"], 2) if signal["price"] is not None else "?"
+        rsi = signal["rsi"] if signal["rsi"] is not None else "?"
+        event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
 
         st.toast(f"{signal_label} (Weekly): {signal['name']}", icon="🟢")
+
+        if TelegramNotifier.is_configured():
+            TelegramNotifier.send(
+                f"🟢 {signal['name']} ({signal['ticker']}) — {signal_label} (Weekly)\n"
+                f"{event_time}\nPrice {price} · RSI {rsi}"
+            )
 
         AlertLog.log_alert(
             signal["ticker"], signal["name"], "LONG", signal["price"], signal["rsi"], None,
