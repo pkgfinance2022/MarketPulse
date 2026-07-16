@@ -28,6 +28,7 @@ from dashboard.services.alert_log import AlertLog
 from dashboard.services.dashboard_loader import DashboardLoader
 from dashboard.services.fundamental_scan_service import FundamentalScanService
 from dashboard.services.ticker_aliases import resolve_ticker
+from dashboard.services import trusted_ips
 from dashboard.services.reversal_status import ReversalStatusService
 from dashboard.services.reversal_status_daily import DailyReversalStatusService
 from dashboard.services.rsi_wave_status import RSIWaveStatusService
@@ -2631,13 +2632,50 @@ def render_stock_news(ticker, name):
 APP_PASSWORD = "2402"
 
 
+def _client_ip():
+    """
+    Best-effort client IP from the proxy headers Streamlit Cloud sets
+    (X-Forwarded-For can carry a comma-separated hop chain - the first
+    entry is the original client). Returns None if unavailable (e.g.
+    running outside a real browser request), so callers can gracefully
+    fall back to session-only auth instead of crashing.
+    """
+
+    try:
+        headers = st.context.headers
+    except Exception:
+        return None
+
+    if not headers:
+        return None
+
+    forwarded = headers.get("X-Forwarded-For")
+
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+
+    return headers.get("X-Real-IP")
+
+
 def _require_password():
     """
     A simple lock screen, not real security - just enough to stop
     anyone who stumbles on the public app URL from poking around.
+
+    On top of the existing per-session st.session_state check (which
+    already skips the prompt for the rest of one browser session),
+    a successful login also trusts the client's IP for
+    trusted_ips.TRUST_WINDOW_HOURS, so the same network isn't asked
+    again more than about once a day even in a brand new session.
     """
 
     if st.session_state.get("authenticated"):
+        return
+
+    client_ip = _client_ip()
+
+    if client_ip and trusted_ips.is_trusted(client_ip):
+        st.session_state.authenticated = True
         return
 
     st.title("🔒 MarketPulse")
@@ -2649,6 +2687,8 @@ def _require_password():
     if submitted:
         if entered == APP_PASSWORD:
             st.session_state.authenticated = True
+            if client_ip:
+                trusted_ips.mark_trusted(client_ip)
             st.rerun()
         else:
             st.error("Wrong password.")
