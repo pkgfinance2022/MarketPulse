@@ -6,7 +6,17 @@ even when the browser tab isn't open (unlike the desktop notification,
 which only fires while the tab is alive). Credentials are read from
 Streamlit secrets (.streamlit/secrets.toml, already gitignored) - never
 hardcoded here, so the token can't end up committed to source control.
+
+Also used standalone by scripts/telegram_scan.py (the GitHub Actions
+always-on scanner, which runs as a plain Python process with no
+Streamlit runtime at all) - st.secrets raises StreamlitSecretNotFoundError
+rather than just returning None when no secrets.toml exists anywhere
+on disk, which is exactly that script's situation, so credentials fall
+back to plain environment variables (how the GitHub Actions workflow
+passes them in) whenever st.secrets isn't available.
 """
+
+import os
 
 import requests
 import streamlit as st
@@ -19,8 +29,17 @@ class TelegramNotifier:
     @staticmethod
     def _credentials():
 
-        token = st.secrets.get("TELEGRAM_BOT_TOKEN")
-        chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
+        token = None
+        chat_id = None
+
+        try:
+            token = st.secrets.get("TELEGRAM_BOT_TOKEN")
+            chat_id = st.secrets.get("TELEGRAM_CHAT_ID")
+        except Exception:
+            pass
+
+        token = token or os.environ.get("TELEGRAM_BOT_TOKEN")
+        chat_id = chat_id or os.environ.get("TELEGRAM_CHAT_ID")
 
         return token, chat_id
 
