@@ -96,34 +96,12 @@ def _scan_eta_text(cache_entry):
     return f"~{_format_duration(remaining)} remaining (based on the last scan)"
 
 
-def _format_event_time(ts):
-    """
-    Formats an engine's event_time into a display string for the
-    scanner's Timestamp columns. Rounded to the hour deliberately (no
-    minutes) - "3 PM" is plenty precise for "when did you see this",
-    and it's what was actually asked for. Hourly/15m bars carry a real
-    time of day, always converted to CET/CEST so events from different
-    exchanges (each with their own tz from yfinance) read on one
-    shared clock instead of a different one per row. Daily/Weekly bars
-    carry a midnight exchange-local timestamp that only identifies
-    WHICH trading day - converting that to CET would risk shifting it
-    onto the wrong calendar date (e.g. a Tokyo midnight bar sliding
-    back a day), so those are shown as their original date, untouched.
-    """
-
-    if ts is None or pd.isna(ts):
-        return "—"
-
-    ts = pd.Timestamp(ts)
-
-    if ts.hour == 0 and ts.minute == 0:
-        return ts.strftime("%b %d")
-
-    ts = time_utils.to_cet(ts)
-    hour12 = ts.hour % 12 or 12
-    ampm = "AM" if ts.hour < 12 else "PM"
-
-    return f"{ts.strftime('%b %d')}, {hour12} {ampm} CET"
+# Shared with scripts/telegram_scan.py, which needs the exact same
+# "Jul 16, 7 PM CET" formatting so a Telegram alert's timestamp always
+# matches what Command Center's "When" column would show for the same
+# event - kept in time_utils.py (no Streamlit dependency) rather than
+# here so that standalone script can import it too.
+_format_event_time = time_utils.format_event_time
 
 
 def init_state():

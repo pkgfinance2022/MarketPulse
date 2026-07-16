@@ -43,3 +43,32 @@ def to_cet(ts):
         ts = ts.tz_localize("UTC")
 
     return ts.tz_convert(CET)
+
+
+def format_event_time(ts):
+    """
+    Formats an engine's event_time into a display string - "Jul 16, 7
+    PM CET". Rounded to the hour deliberately (no minutes) - plenty
+    precise for "when did this happen". Hourly/15m bars carry a real
+    time of day, always converted to CET/CEST so events from different
+    exchanges (each with their own tz from yfinance) read on one
+    shared clock. Daily/Weekly bars carry a midnight exchange-local
+    timestamp that only identifies WHICH trading day - converting that
+    to CET would risk shifting it onto the wrong calendar date (e.g. a
+    Tokyo midnight bar sliding back a day), so those are shown as their
+    original date, untouched.
+    """
+
+    if ts is None or pd.isna(ts):
+        return "—"
+
+    ts = pd.Timestamp(ts)
+
+    if ts.hour == 0 and ts.minute == 0:
+        return ts.strftime("%b %d")
+
+    ts = to_cet(ts)
+    hour12 = ts.hour % 12 or 12
+    ampm = "AM" if ts.hour < 12 else "PM"
+
+    return f"{ts.strftime('%b %d')}, {hour12} {ampm} CET"
