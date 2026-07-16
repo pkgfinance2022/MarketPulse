@@ -6,6 +6,7 @@ the engines and services, while widgets only render already-prepared data.
 """
 
 import json
+import os
 import sys
 import time
 from datetime import timedelta
@@ -2667,7 +2668,22 @@ def render_stock_news(ticker, name):
         st.divider()
 
 
-APP_PASSWORD = "2402"
+def _app_password():
+    """
+    Reads the gate password from secrets/env, same fallback pattern as
+    TelegramNotifier - never hardcoded in source so a fresh password
+    isn't sitting in git history. Falls back to the old hardcoded value
+    only if no secret/env var is configured yet, so this can't lock
+    anyone out before TELEGRAM_BOT_TOKEN-style secrets are actually set
+    up for APP_PASSWORD.
+    """
+
+    try:
+        value = st.secrets.get("APP_PASSWORD")
+    except Exception:
+        value = None
+
+    return value or os.environ.get("APP_PASSWORD") or "2402"
 
 
 def _client_ip():
@@ -2723,7 +2739,7 @@ def _require_password():
         submitted = st.form_submit_button("Unlock")
 
     if submitted:
-        if entered == APP_PASSWORD:
+        if entered == _app_password():
             st.session_state.authenticated = True
             if client_ip:
                 trusted_ips.mark_trusted(client_ip)

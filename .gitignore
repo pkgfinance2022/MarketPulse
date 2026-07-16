@@ -52,3 +52,4 @@ database/trusted_ips.csv
 backtest_results*.csv
 backtest_pullback.csv
 fundamental_scan_results.csv
+cache/
