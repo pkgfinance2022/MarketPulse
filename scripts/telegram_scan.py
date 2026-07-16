@@ -108,7 +108,7 @@ def tickers_for(country, sector="All"):
     return [(a.symbol, a.name) for a in assets]
 
 
-def send_alert(name, ticker, label, direction, price, rsi, stop_target, timeframe):
+def send_alert(name, ticker, label, direction, price, rsi, stop_target, timeframe, description=""):
 
     icon = "🟢" if direction == "LONG" else "🔴"
     price_str = round(price, 4) if price is not None else "?"
@@ -120,7 +120,7 @@ def send_alert(name, ticker, label, direction, price, rsi, stop_target, timefram
 
     message = (
         f"{icon} {name} ({ticker}) — {label} ({timeframe})\n"
-        f"Price {price_str} · RSI {rsi_str}{levels}"
+        f"Price {price_str} · RSI {rsi_str}{levels}\n{description}"
     )
 
     print(f"ALERT: {message}")
@@ -142,7 +142,7 @@ def check_hourly(ticker, name, state, is_first_run):
 
     if trace:
 
-        _, wave_state, _ = RSIWaveStrategy.describe(trace)
+        desc, wave_state, _ = RSIWaveStrategy.describe(trace)
         key = f"{ticker}:wave"
         previous = state.get(key)
 
@@ -153,7 +153,7 @@ def check_hourly(ticker, name, state, is_first_run):
             status = RSIWaveStatusService.analyse(ticker)
             stop_target = status["stop_target"] if status else None
 
-            send_alert(name, ticker, "RSI Wave entry", direction, last["price"], last["rsi"], stop_target, "Hourly")
+            send_alert(name, ticker, "RSI Wave entry", direction, last["price"], last["rsi"], stop_target, "Hourly", desc)
 
         state[key] = wave_state
 
@@ -175,7 +175,7 @@ def check_hourly(ticker, name, state, is_first_run):
             label = REVERSAL_SIGNAL_LABELS.get(rev_state, rev_state)
             last = result["trace"][-1]
 
-            send_alert(name, ticker, label, direction, last["price"], last["rsi"], levels, "Reversal Playbook 1H")
+            send_alert(name, ticker, label, direction, last["price"], last["rsi"], levels, "Reversal Playbook 1H", desc)
 
         state[key] = rev_state
 
@@ -202,7 +202,7 @@ def check_daily_weekly(ticker, name, state, is_first_run):
         label = REVERSAL_SIGNAL_LABELS.get(daily_state, daily_state)
         last = result["trace"][-1]
 
-        send_alert(name, ticker, label, direction, last["price"], last["rsi"], levels, "Daily")
+        send_alert(name, ticker, label, direction, last["price"], last["rsi"], levels, "Daily", desc)
 
     state[key] = daily_state
 
@@ -215,7 +215,7 @@ def check_daily_weekly(ticker, name, state, is_first_run):
         last = result["trace"][-1]
         label = "Multi-try breakout" if weekly_state == "MULTI_TRY_BREAKOUT" else "Path C confirmed"
 
-        send_alert(name, ticker, label, "LONG", last["price"], last["weekly_rsi"], None, "Weekly")
+        send_alert(name, ticker, label, "LONG", last["price"], last["weekly_rsi"], None, "Weekly", weekly_desc)
 
     state[weekly_key] = weekly_state
 

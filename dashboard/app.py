@@ -323,7 +323,8 @@ def check_for_new_entries():
         # Name first (what an end user actually recognizes), ticker in
         # parentheses for cross-referencing elsewhere - no repeated
         # "MarketPulse" branding, no raw internal state code.
-        message = f"{icon} {entry['name']} ({entry['ticker']}) — {entry['direction']} entry\n{event_time}\nPrice {price} · RSI {rsi}{levels}"
+        description = full_status["description"] if full_status else ""
+        message = f"{icon} {entry['name']} ({entry['ticker']}) — {entry['direction']} entry\n{event_time}\nPrice {price} · RSI {rsi}{levels}\n{description}"
 
         st.toast(f"{entry['direction']} entry: {entry['name']}", icon=icon)
 
@@ -437,9 +438,10 @@ def check_for_new_reversal_signals():
             else ""
         )
 
+        description = full_status["description"] if full_status else ""
         message = (
             f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (Reversal Playbook)\n"
-            f"{event_time}\nPrice {price} · RSI {signal['rsi']}{levels}"
+            f"{event_time}\nPrice {price} · RSI {signal['rsi']}{levels}\n{description}"
         )
 
         st.toast(f"{signal_label}: {signal['name']}", icon=icon)
@@ -1501,9 +1503,10 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
             st.toast(f"{entry['direction']} entry: {entry['name']}", icon=icon)
 
             if TelegramNotifier.is_configured():
+                description = full_status["description"] if full_status else ""
                 TelegramNotifier.send(
                     f"{icon} {entry['name']} ({entry['ticker']}) — {entry['direction']} entry (RSI Wave)\n"
-                    f"{event_time}\nPrice {price} · RSI {rsi}{levels}"
+                    f"{event_time}\nPrice {price} · RSI {rsi}{levels}\n{description}"
                 )
 
             AlertLog.log_alert(
@@ -1556,9 +1559,10 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
             st.toast(f"{signal_label}: {signal['name']}", icon=icon)
 
             if TelegramNotifier.is_configured():
+                description = full_status["description"] if full_status else ""
                 TelegramNotifier.send(
                     f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (Reversal Playbook)\n"
-                    f"{event_time}\nPrice {price} · RSI {rsi}{levels}"
+                    f"{event_time}\nPrice {price} · RSI {rsi}{levels}\n{description}"
                 )
 
             AlertLog.log_alert(
@@ -1611,9 +1615,10 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
         st.toast(f"{signal_label} (Daily): {signal['name']}", icon=icon)
 
         if TelegramNotifier.is_configured():
+            description = full_status["description"] if full_status else ""
             TelegramNotifier.send(
                 f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (Daily)\n"
-                f"{event_time}\nPrice {price} · RSI {rsi}{levels}"
+                f"{event_time}\nPrice {price} · RSI {rsi}{levels}\n{description}"
             )
 
         AlertLog.log_alert(
@@ -1630,6 +1635,7 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
                 "state": info["weekly_state"],
                 "price": info["price"],
                 "rsi": info["rsi"],
+                "description": info.get("weekly_description", ""),
             }
             for ticker, info in daily_reversal_states.items()
             if (prefix != "crypto" or ticker == CRYPTO_ALERT_TICKER)
@@ -1654,7 +1660,7 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
         if TelegramNotifier.is_configured():
             TelegramNotifier.send(
                 f"🟢 {signal['name']} ({signal['ticker']}) — {signal_label} (Weekly)\n"
-                f"{event_time}\nPrice {price} · RSI {rsi}"
+                f"{event_time}\nPrice {price} · RSI {rsi}\n{signal['description']}"
             )
 
         AlertLog.log_alert(
