@@ -33,13 +33,105 @@ single slot first blocks everyone else) - exactly the "Global Indices
 not ready for 10 minutes" symptom this was built to prevent.
 """
 
+import pickle
 import threading
 import time
 from collections import defaultdict
+from pathlib import Path
 
 _lock = threading.Lock()
 _cache = {}
 _scan_semaphores = defaultdict(lambda: threading.Semaphore(1))
+
+# Persists each prefix's last completed scan to disk, so a fresh
+# server process (a redeploy, a Streamlit Cloud sleep/wake cycle, or
+# just restarting `streamlit run` locally to pick up a code change)
+# doesn't have to sit through a multi-minute rescan before it can show
+# anything - it loads straight from the last real result instead.
+#
+# Tagged with the git commit the scan actually ran under (see
+# _current_commit_hash below), read directly from .git/ rather than
+# shelling out to the git binary (which may not exist in every
+# container). A persisted result from a different commit than the one
+# currently running is discarded on load rather than trusted - the
+# analysis code itself may have changed since that scan ran, and an
+# old result computed under different logic isn't "the same past
+# finding", it's just wrong. The routine hourly/10-min staleness cycle
+# will naturally recompute it either way; this only controls what's
+# shown in the meantime.
+CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "database" / "universe_cache"
+
+
+def _current_commit_hash():
+
+    git_dir = Path(__file__).resolve().parent.parent.parent / ".git"
+    head_file = git_dir / "HEAD"
+
+    if not head_file.exists():
+        return None
+
+    try:
+        content = head_file.read_text().strip()
+    except OSError:
+        return None
+
+    if not content.startswith("ref:"):
+        return content  # detached HEAD - already a commit hash
+
+    ref_path = git_dir / content.split(" ", 1)[1]
+
+    try:
+        return ref_path.read_text().strip()
+    except OSError:
+        return None
+
+
+def _load_persisted_cache():
+    """
+    Called once at import time. Populates _cache from disk for every
+    prefix whose persisted commit hash matches the code actually
+    running right now - anything else is left absent, so the normal
+    "cache is missing -> scan" path takes over exactly as if this were
+    a brand new process with nothing cached yet.
+    """
+
+    if not CACHE_DIR.exists():
+        return
+
+    current_commit = _current_commit_hash()
+
+    for path in CACHE_DIR.glob("*.pkl"):
+
+        try:
+            with open(path, "rb") as f:
+                saved = pickle.load(f)
+        except (pickle.PickleError, EOFError, OSError, AttributeError):
+            continue
+
+        if current_commit is None or saved.get("git_commit") != current_commit:
+            continue
+
+        _cache[path.stem] = {
+            "data": saved["data"],
+            "ts": saved["ts"],
+            "loading": False,
+            "loading_since": None,
+        }
+
+
+def _persist(prefix, entry):
+
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+        with open(CACHE_DIR / f"{prefix}.pkl", "wb") as f:
+            pickle.dump({"data": entry["data"], "ts": entry["ts"], "git_commit": _current_commit_hash()}, f)
+
+    except (pickle.PickleError, OSError):
+        pass  # best-effort - a failed write just means the next process starts cold, same as today
+
+
+_load_persisted_cache()
 
 # Kept separate from _cache (and NOT wiped by force_clear_all/
 # force_clear) - a scan's own past duration is the best available
@@ -169,6 +261,8 @@ def start_scan(prefix, scan_fn, pool="universe"):
                 with _lock:
                     _cache[prefix] = {"data": result, "ts": completed_at, "loading": False, "loading_since": None}
                     _last_durations[prefix] = completed_at - started_at
+
+                _persist(prefix, _cache[prefix])
 
             except Exception:
                 with _lock:
