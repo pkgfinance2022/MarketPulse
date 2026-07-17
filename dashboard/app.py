@@ -2100,6 +2100,12 @@ def _build_command_center_timeframe_df(signal_columns, sources):
 
         for _, row in df[mask].iterrows():
 
+            # Crypto is noisy across ~250 symbols of wildly varying
+            # quality/liquidity - same reasoning as the Telegram
+            # alerts, which already only fire for BTC.
+            if session_key == "crypto_market" and row["Ticker"] != CRYPTO_ALERT_TICKER:
+                continue
+
             entry = {
                 "Source": label,
                 "Status": row.get("Status"),
@@ -2217,6 +2223,12 @@ def _render_command_center_signals():
             mask = df[column].astype(str).str.lower().str.contains("|".join(keywords))
 
             for _, row in df[mask].iterrows():
+
+                # Crypto is noisy across ~250 symbols of wildly varying
+                # quality/liquidity - same reasoning as the Telegram
+                # alerts, which already only fire for BTC.
+                if session_key == "crypto_market" and row["Ticker"] != CRYPTO_ALERT_TICKER:
+                    continue
 
                 why = row.get(full_col, "")
 
