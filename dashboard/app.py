@@ -2159,6 +2159,35 @@ def _export_command_center_excel(df):
         pass
 
 
+def _parse_command_center_when(when_text):
+    """
+    Turns the "When" column's display text ("Jul 16, 7 PM CET" or the
+    daily/weekly "Jul 16" form) back into a sortable timestamp, so
+    Command Center's table can default to latest-first instead of
+    whatever order rows happened to be scanned in. No year in the
+    original text (see time_utils.format_event_time) - assumes the
+    current year, which only misorders rows right at a December/
+    January boundary, harmless for a table that only ever shows
+    recent signals anyway. "—" (never fired) sorts to the very bottom.
+    """
+
+    if not when_text or when_text == "—":
+        return pd.Timestamp.min
+
+    year = time_utils.now_cet().year
+    cleaned = when_text.replace(" CET", "")
+
+    try:
+        return pd.to_datetime(f"{cleaned} {year}", format="%b %d, %I %p %Y")
+    except ValueError:
+        pass
+
+    try:
+        return pd.to_datetime(f"{cleaned} {year}", format="%b %d %Y")
+    except ValueError:
+        return pd.Timestamp.min
+
+
 def _command_center_timeframe(base_timeframe, why_text):
     """
     The engine that FIRED the signal runs on `base_timeframe`, but its
@@ -2288,6 +2317,8 @@ def _render_command_center_signals():
     if rows:
 
         combined = pd.DataFrame(rows)
+        combined["_when_sort"] = combined["When"].apply(_parse_command_center_when)
+        combined = combined.sort_values("_when_sort", ascending=False).drop(columns="_when_sort")
 
         st.dataframe(
             combined,
