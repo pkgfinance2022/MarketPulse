@@ -607,6 +607,8 @@ def _refresh_global_indices(sector):
     if cache_entry["ts"] > st.session_state.get(seen_ts_key, 0):
 
         result = cache_entry["data"]
+        previous_market = st.session_state.global_market
+        sector_changed = previous_market is not None and previous_market["sector"] != result["sector"]
 
         st.session_state.global_market = {
             "df": result["df"],
@@ -618,13 +620,23 @@ def _refresh_global_indices(sector):
         if st.session_state.global_selected_ticker not in result["df"]["Ticker"].tolist():
             st.session_state.global_selected_ticker = result["df"].iloc[0]["Ticker"] if not result["df"].empty else None
 
-        # New data available = treat the next entry-check as a fresh
-        # baseline instead of comparing against stale states (or
-        # notifying about everything already true on arrival).
-        st.session_state.wave_states = {}
-        st.session_state.wave_states_seeded = False
-        st.session_state.reversal_states = {}
-        st.session_state.reversal_states_seeded = False
+        # Only reset the notification baseline when the ticker universe
+        # actually changed (switched region) - this used to reset
+        # unconditionally on every routine rescan of the SAME region
+        # (every GLOBAL_INDICES_REFRESH_SECONDS, ~10 min), which
+        # silently re-seeded "whatever's currently active" as the new
+        # baseline without alerting, roughly every 10 minutes - a real
+        # new signal landing right after one of those resets got
+        # swallowed instead of notified. check_for_new_entries() /
+        # check_for_new_reversal_signals() already track their own
+        # state changes independently on their own faster cadence, so
+        # this display-data refresh has no reason to touch them at all
+        # unless the underlying ticker set is genuinely different now.
+        if sector_changed:
+            st.session_state.wave_states = {}
+            st.session_state.wave_states_seeded = False
+            st.session_state.reversal_states = {}
+            st.session_state.reversal_states_seeded = False
 
         st.session_state[seen_ts_key] = cache_entry["ts"]
 
