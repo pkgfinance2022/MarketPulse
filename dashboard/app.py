@@ -2750,7 +2750,48 @@ def _require_password():
     st.stop()
 
 
+def _warm_background_scans():
+    """
+    Kicks off the same background scans _refresh_universe_body() /
+    render_global_indices_tab() would start on a fresh session's first
+    real render - but called before the password gate, so a scan is
+    already running (or already done) by the time someone actually
+    types the password in, instead of only starting after they unlock.
+
+    Mirrors those functions' own staleness check (cache missing, or
+    older than the refresh cadence and not already loading) rather than
+    calling start_scan() unconditionally - this runs on every single
+    rerun of the unauthenticated password screen, so without that
+    check it would fire a brand new full-universe scan on every
+    keystroke/rerun instead of just once an hour, hammering yfinance
+    exactly like the rate-limit issue hit before.
+
+    Uses "All" for Global Indices since that's always the selectbox's
+    default on a session with no global_sector set yet (see
+    Sidebar._sectors - "All" is always prepended first).
+    """
+
+    now = time.time()
+
+    for prefix, scan_fn in (
+        ("us", lambda: _scan_universe_data("USA")),
+        ("india", lambda: _scan_universe_data("India")),
+        ("crypto", lambda: _scan_universe_data("Crypto")),
+    ):
+        entry = universe_cache.get(prefix)
+        stale = entry is None or (not entry["loading"] and (now - entry["ts"]) >= UNIVERSE_REFRESH_SECONDS)
+        if stale:
+            universe_cache.start_scan(prefix, scan_fn, pool=prefix)
+
+    global_entry = universe_cache.get("global_All")
+    global_stale = global_entry is None or (not global_entry["loading"] and (now - global_entry["ts"]) >= GLOBAL_INDICES_REFRESH_SECONDS)
+    if global_stale:
+        universe_cache.start_scan("global_All", lambda: _scan_global_indices_data("All"), pool="global")
+
+
 def main():
+
+    _warm_background_scans()
 
     _require_password()
 
