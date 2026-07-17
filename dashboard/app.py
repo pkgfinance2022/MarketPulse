@@ -2818,10 +2818,36 @@ def _client_ip():
     return headers.get("X-Real-IP")
 
 
+def _is_local_request():
+    """
+    True when the request's Host header is localhost/127.0.0.1 - i.e.
+    accessed directly via `streamlit run`, with no reverse proxy in
+    front (Streamlit Cloud's own proxy always rewrites Host to the
+    public app domain, never localhost). The whole point of the
+    password gate is stopping a stranger who stumbles on the public
+    URL - that threat doesn't exist for someone already sitting at the
+    machine running it locally, so there's nothing to gate here.
+    """
+
+    try:
+        headers = st.context.headers
+    except Exception:
+        return False
+
+    if not headers:
+        return False
+
+    host = (headers.get("Host") or "").split(":")[0].lower()
+
+    return host in ("localhost", "127.0.0.1")
+
+
 def _require_password():
     """
     A simple lock screen, not real security - just enough to stop
     anyone who stumbles on the public app URL from poking around.
+    Skipped entirely for local access (see _is_local_request) - a
+    reverse-proxied deployment always still requires it.
 
     On top of the existing per-session st.session_state check (which
     already skips the prompt for the rest of one browser session),
@@ -2831,6 +2857,10 @@ def _require_password():
     """
 
     if st.session_state.get("authenticated"):
+        return
+
+    if _is_local_request():
+        st.session_state.authenticated = True
         return
 
     client_ip = _client_ip()
