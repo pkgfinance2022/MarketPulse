@@ -2257,6 +2257,21 @@ def _render_command_center_signals():
         "as each tab's background scan completes - no need to visit them first."
     )
 
+    # Same VIX risk-sentiment note the Global Indices tab already shows -
+    # surfaced here too since this is the tab actually checked regularly,
+    # while Global Indices might not be visited every session.
+    global_market = st.session_state.get("global_market")
+
+    if global_market is not None:
+
+        vix_note = _vix_risk_note(global_market["df"])
+
+        if vix_note:
+            if vix_note.startswith("🔴"):
+                st.warning(vix_note)
+            else:
+                st.info(vix_note)
+
     rows = []
     not_scanned = []
 
