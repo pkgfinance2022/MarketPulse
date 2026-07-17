@@ -40,6 +40,7 @@ from dashboard.services.tradingview_links import tradingview_url
 from dashboard.services.trade_journal import TradeJournal
 from dashboard.services import time_utils
 from dashboard.services import universe_cache
+from dashboard.services import notify_baseline
 from dashboard.widgets.header import Header
 from dashboard.widgets.market_status import MarketStatus
 from dashboard.widgets.scanner import Scanner
@@ -106,26 +107,51 @@ def _scan_eta_text(cache_entry):
 _format_event_time = time_utils.format_event_time
 
 
+NOTIFY_BASELINE_KEYS = ["wave_states", "wave_states_seeded", "reversal_states", "reversal_states_seeded"]
+
+for _prefix, _country, _title in [("us", None, None), ("india", None, None), ("crypto", None, None)]:
+    NOTIFY_BASELINE_KEYS += [
+        f"{_prefix}_wave_states", f"{_prefix}_wave_states_seeded",
+        f"{_prefix}_reversal_states", f"{_prefix}_reversal_states_seeded",
+        f"{_prefix}_daily_reversal_states", f"{_prefix}_daily_reversal_states_seeded",
+    ]
+
+
+def _persist_notify_baseline():
+    """
+    Snapshots every notification baseline key into one file after each
+    update - see dashboard/services/notify_baseline.py for why this
+    exists (restarting the server used to always wipe these, silently
+    swallowing any signal that transitioned around the same time).
+    """
+
+    notify_baseline.save({key: st.session_state.get(key) for key in NOTIFY_BASELINE_KEYS})
+
+
 def init_state():
+
+    persisted = notify_baseline.load()
 
     defaults = {
         "global_market": None,
         "global_selected_ticker": None,
         "global_sector": "All",
-        "wave_states": {},
-        "wave_states_seeded": False,
-        "reversal_states": {},
-        "reversal_states_seeded": False,
+        "wave_states": persisted.get("wave_states", {}),
+        "wave_states_seeded": persisted.get("wave_states_seeded", False),
+        "reversal_states": persisted.get("reversal_states", {}),
+        "reversal_states_seeded": persisted.get("reversal_states_seeded", False),
         "fundamental_scan_result": None,
     }
 
     for prefix, _country, _title in UNIVERSE_TABS:
         defaults[f"{prefix}_market"] = None
         defaults[f"{prefix}_selected_ticker"] = None
-        defaults[f"{prefix}_wave_states"] = {}
-        defaults[f"{prefix}_wave_states_seeded"] = False
-        defaults[f"{prefix}_reversal_states"] = {}
-        defaults[f"{prefix}_reversal_states_seeded"] = False
+        defaults[f"{prefix}_wave_states"] = persisted.get(f"{prefix}_wave_states", {})
+        defaults[f"{prefix}_wave_states_seeded"] = persisted.get(f"{prefix}_wave_states_seeded", False)
+        defaults[f"{prefix}_reversal_states"] = persisted.get(f"{prefix}_reversal_states", {})
+        defaults[f"{prefix}_reversal_states_seeded"] = persisted.get(f"{prefix}_reversal_states_seeded", False)
+        defaults[f"{prefix}_daily_reversal_states"] = persisted.get(f"{prefix}_daily_reversal_states", {})
+        defaults[f"{prefix}_daily_reversal_states_seeded"] = persisted.get(f"{prefix}_daily_reversal_states_seeded", False)
         defaults[f"{prefix}_last_loaded_ts"] = 0
         defaults[f"{prefix}_seen_cache_ts"] = 0
 
@@ -271,6 +297,7 @@ def check_for_new_entries():
 
     st.session_state.wave_states = current_states
     st.session_state.wave_states_seeded = True
+    _persist_notify_baseline()
 
     for entry in new_entries:
 
@@ -395,6 +422,7 @@ def check_for_new_reversal_signals():
 
     st.session_state.reversal_states = current_states
     st.session_state.reversal_states_seeded = True
+    _persist_notify_baseline()
 
     browser_entries = []
 
@@ -1721,6 +1749,7 @@ def _refresh_universe_body(prefix, country):
         st.session_state[f"{prefix}_daily_reversal_states_seeded"] = True
         st.session_state[f"{prefix}_last_loaded_ts"] = cache_entry["ts"]
         st.session_state[seen_ts_key] = cache_entry["ts"]
+        _persist_notify_baseline()
 
     last_loaded = st.session_state[f"{prefix}_last_loaded_ts"]
     age_minutes = round((time.time() - last_loaded) / 60)
