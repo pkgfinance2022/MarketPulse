@@ -2320,13 +2320,12 @@ def _render_command_center_signals():
         combined["_when_sort"] = combined["When"].apply(_parse_command_center_when)
         combined = combined.sort_values("_when_sort", ascending=False).drop(columns="_when_sort")
 
-        st.dataframe(
-            combined,
-            use_container_width=True,
-            hide_index=True,
-            height=600,
-            column_config={"Why": st.column_config.TextColumn("Why", width=520)},
-        )
+        # st.dataframe's grid can't wrap cell text - long "Why" text
+        # just gets clipped at the column's fixed width. st.table
+        # renders a plain HTML table instead, which wraps naturally and
+        # grows each row's height to fit - a taller table is an
+        # accepted tradeoff for actually being able to read the text.
+        st.table(combined.style.hide(axis="index"))
 
         _export_command_center_excel(combined)
 
