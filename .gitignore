@@ -49,6 +49,7 @@ database/parked_trades.csv
 database/alert_log.csv
 database/positions.csv
 database/trusted_ips.csv
+database/command_center_latest.xlsx
 backtest_results*.csv
 backtest_pullback.csv
 fundamental_scan_results.csv

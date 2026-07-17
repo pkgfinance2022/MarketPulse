@@ -5,6 +5,7 @@ The app coordinates services and widgets. Analysis and business rules live in
 the engines and services, while widgets only render already-prepared data.
 """
 
+import io
 import json
 import os
 import sys
@@ -2123,6 +2124,41 @@ def _build_command_center_timeframe_df(signal_columns, sources):
     return pd.DataFrame(rows)
 
 
+def _export_command_center_excel(df):
+    """
+    Offers the Command Center table as a downloadable .xlsx - works
+    identically on localhost and Streamlit Cloud since a download
+    button never touches disk, just streams bytes to the browser.
+
+    Also overwrites a fixed local path on every render when one is
+    reachable (a real, persistent file when running locally). No
+    explicit "am I running on Streamlit Cloud" check is needed for
+    this to behave correctly there too - Cloud's container filesystem
+    is writable but ephemeral and never exposed to the user, so the
+    write either lands somewhere nobody can ever reach (harmless) or
+    fails outright on a read-only mount (caught below) - either way
+    it's a no-op from the user's perspective, exactly like being
+    skipped.
+    """
+
+    buffer = io.BytesIO()
+    df.to_excel(buffer, index=False, sheet_name="Command Center")
+    buffer.seek(0)
+
+    st.download_button(
+        "⬇️ Export to Excel",
+        data=buffer,
+        file_name=f"command_center_{time_utils.now_cet().strftime('%Y-%m-%d_%H%M')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="command_center_export_btn",
+    )
+
+    try:
+        df.to_excel(PROJECT_ROOT / "database" / "command_center_latest.xlsx", index=False, sheet_name="Command Center")
+    except Exception:
+        pass
+
+
 def _command_center_timeframe(base_timeframe, why_text):
     """
     The engine that FIRED the signal runs on `base_timeframe`, but its
@@ -2260,6 +2296,8 @@ def _render_command_center_signals():
             height=600,
             column_config={"Why": st.column_config.TextColumn("Why", width=520)},
         )
+
+        _export_command_center_excel(combined)
 
     else:
         st.success("Nothing actionable right now across the tabs scanned so far.")
