@@ -66,7 +66,7 @@
   "BSE.NS:daily": "WATCHING",
   "BSE.NS:weekly": "WATCHING",
   "BTC-USD:daily": "SELL_SIGNAL",
-  "BTC-USD:reversal_1h": "WATCHING",
+  "BTC-USD:reversal_1h": "SELL_SIGNAL",
   "BTC-USD:wave": "ALERT_LONG",
   "BTC-USD:weekly": "WATCHING",
   "CAMS.NS:daily": "WATCHING",
