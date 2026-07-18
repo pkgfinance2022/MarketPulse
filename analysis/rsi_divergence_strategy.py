@@ -66,6 +66,12 @@ class RSIDivergenceStrategy:
     # backtest below exists to sanity-check.
     BOUNCE_MARGIN = 5
 
+    # A second-leg low that's only 0.1 RSI points "higher" than the
+    # base isn't a real divergence, it's rounding noise - require a
+    # meaningful gap before tagging it as the textbook higher-low/
+    # lower-high pattern.
+    MIN_DIVERGENCE_MARGIN = 3
+
     @staticmethod
     def _prepare(df):
 
@@ -105,6 +111,7 @@ class RSIDivergenceStrategy:
             r = float(rsi.iloc[i])
             price = float(close.iloc[i])
             event = None
+            divergence_points = None
 
             if phase == "WATCHING":
 
@@ -135,10 +142,15 @@ class RSIDivergenceStrategy:
                 if r >= cls.CROSS_LONG and prev_rsi < cls.CROSS_LONG:
 
                     if bounced_from_base and second_leg_rsi is not None:
-                        divergence = second_leg_price <= base_price and second_leg_rsi > base_rsi
+                        divergence = second_leg_price <= base_price and second_leg_rsi > base_rsi + cls.MIN_DIVERGENCE_MARGIN
                         event = "ENTRY_LONG_DIVERGENCE" if divergence else "ENTRY_LONG_NO_DIVERGENCE"
                     else:
                         event = "ENTRY_LONG_NO_DIVERGENCE"
+
+                    divergence_points = {
+                        "base_rsi": base_rsi, "base_price": base_price,
+                        "second_leg_rsi": second_leg_rsi, "second_leg_price": second_leg_price,
+                    }
 
                     phase = "WATCHING"
 
@@ -165,10 +177,15 @@ class RSIDivergenceStrategy:
                 if r <= cls.CROSS_SHORT and prev_rsi > cls.CROSS_SHORT:
 
                     if bounced_from_base and second_leg_rsi is not None:
-                        divergence = second_leg_price >= base_price and second_leg_rsi < base_rsi
+                        divergence = second_leg_price >= base_price and second_leg_rsi < base_rsi - cls.MIN_DIVERGENCE_MARGIN
                         event = "ENTRY_SHORT_DIVERGENCE" if divergence else "ENTRY_SHORT_NO_DIVERGENCE"
                     else:
                         event = "ENTRY_SHORT_NO_DIVERGENCE"
+
+                    divergence_points = {
+                        "base_rsi": base_rsi, "base_price": base_price,
+                        "second_leg_rsi": second_leg_rsi, "second_leg_price": second_leg_price,
+                    }
 
                     phase = "WATCHING"
 
@@ -187,6 +204,7 @@ class RSIDivergenceStrategy:
                 "rsi": r,
                 "price": price,
                 "time": time_index[i],
+                "divergence_points": divergence_points,
             })
 
             prev_rsi = r
