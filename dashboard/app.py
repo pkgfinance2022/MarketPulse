@@ -2625,13 +2625,29 @@ COMMAND_CENTER_SOURCES = [
 ]
 
 COMMAND_CENTER_COLUMNS = [
-    # column, full-text column, timestamp column, base timeframe, keywords that identify an "act now" label (vs. watching/alert/forming)
-    ("Setup", "Setup Full", "Setup Timestamp", "Hourly", ("entry",)),
-    ("Reversal", "Reversal Full", "Reversal Timestamp", "Hourly", ("signal", "trigger", "continuation")),
-    ("Daily Reversal", "Daily Reversal Full", "Daily Reversal Timestamp", "Daily", ("signal", "trigger", "continuation")),
-    ("RSI Divergence", "RSI Divergence Full", "RSI Divergence Timestamp", "Hourly", ("entry",)),
-    ("Chart Patterns", "Chart Patterns Full", "Chart Patterns Timestamp", "Daily", ("entry",)),
+    # column, full-text column, timestamp column, base timeframe, keywords that identify an "act now" label (vs. watching/alert/forming), style
+    ("Setup", "Setup Full", "Setup Timestamp", "Hourly", ("entry",), "📈 Momentum"),
+    ("Reversal", "Reversal Full", "Reversal Timestamp", "Hourly", ("signal", "trigger", "continuation"), "🔄 Reversal"),
+    ("Daily Reversal", "Daily Reversal Full", "Daily Reversal Timestamp", "Daily", ("signal", "trigger", "continuation"), "🔄 Reversal"),
+    ("RSI Divergence", "RSI Divergence Full", "RSI Divergence Timestamp", "Hourly", ("entry",), "🔄 Reversal"),
+    ("Chart Patterns", "Chart Patterns Full", "Chart Patterns Timestamp", "Daily", ("entry",), "🔄 Reversal"),
 ]
+
+# Setup/RSI Wave is the one engine that rides an already-established
+# move (trend-following) - every other engine looks for a trend
+# stalling/rejecting and bets on it turning (counter-trend). Surfaced
+# as its own column in Command Center because two engines can and do
+# legitimately disagree on the SAME ticker at the SAME time without
+# either being wrong (e.g. BTC's Hourly Wave riding a strong short-term
+# up-move while its Daily Reversal engine flags the slower daily trend
+# rejecting) - they're answering different questions on different
+# clocks, not making one unified "the algorithm's opinion" call. Once
+# rows were flattened into a single list, that distinction was
+# invisible and just looked like the app contradicting itself.
+COMMAND_CENTER_STYLE_NOTES = {
+    "📈 Momentum": "Rides an already-established move - expects it to continue.",
+    "🔄 Reversal": "Looks for a trend stalling/rejecting - expects it to turn.",
+}
 
 # RSI Divergence is Hourly on purpose for US Stocks too (unlike Setup/
 # Reversal, which US/India skip entirely, see COMMAND_CENTER_HOURLY_SOURCES
@@ -2892,7 +2908,7 @@ def _render_command_center_signals():
         if df.empty:
             continue
 
-        for column, full_col, ts_col, base_timeframe, keywords in COMMAND_CENTER_COLUMNS:
+        for column, full_col, ts_col, base_timeframe, keywords, style in COMMAND_CENTER_COLUMNS:
 
             if column not in df.columns:
                 continue
@@ -2928,6 +2944,7 @@ def _render_command_center_signals():
                         "Price": row.get("Price"),
                         "Timeframe": _command_center_timeframe(base_timeframe, why),
                         "Signal Type": column,
+                        "Style": style,
                         "Signal": row[column],
                         "When": row.get(ts_col, "—"),
                         "Why": why,
@@ -2942,6 +2959,23 @@ def _render_command_center_signals():
         combined = pd.DataFrame(rows)
         combined["_when_sort"] = combined["When"].apply(_parse_command_center_when)
         combined = combined.sort_values("_when_sort", ascending=False).drop(columns="_when_sort")
+
+        # A ticker showing up with BOTH styles at once (e.g. an Hourly
+        # Momentum wave riding an up-move while the Daily Reversal
+        # engine flags the slower trend rejecting) isn't the app
+        # contradicting itself - they're different engines answering
+        # different questions on different clocks. Flagged explicitly
+        # here rather than left for whoever's reading the table to
+        # notice the "conflict" and wonder which one is wrong.
+        for ticker, group in combined.groupby("Ticker"):
+
+            styles = set(group["Style"])
+
+            if len(styles) > 1:
+                st.caption(
+                    f"ℹ️ {ticker} has signals from more than one style below - "
+                    + " vs. ".join(f"**{s}** ({COMMAND_CENTER_STYLE_NOTES.get(s, '')})" for s in sorted(styles))
+                )
 
         # st.dataframe's grid can't wrap cell text - long "Why" text
         # just gets clipped at the column's fixed width. st.table
