@@ -47,6 +47,7 @@ performers had thin per-symbol samples (3-5 trades) - promising, but
 not yet validated enough to wire into any live screener or alert.
 """
 
+import pandas as pd
 import ta
 
 from analysis.rsi_wave_strategy import RSIWaveStrategy
@@ -77,6 +78,14 @@ class RSIDivergenceStrategy:
     # peaking around this value.
     CONFIRM_MARGIN = 5
 
+    # How close the second-leg swing point has to sit to the 200 EMA
+    # to count as "taking the 200 EMA as support/resistance" - an extra
+    # confluence note on top of the divergence itself (not a
+    # requirement to enter, just a higher-confidence flag), matching
+    # the same idea RSI Wave and Reversal Playbook already use EMA200
+    # for.
+    EMA200_CONFLUENCE_PCT = 0.5
+
     @staticmethod
     def _prepare(df):
 
@@ -87,6 +96,7 @@ class RSIDivergenceStrategy:
             "close": close,
             "high": df["High"],
             "low": df["Low"],
+            "ema200": ta.trend.ema_indicator(close, window=200),
             "rsi": ta.momentum.rsi(typical_price, window=14),
             "time": df.index,
         }
@@ -94,7 +104,7 @@ class RSIDivergenceStrategy:
     @classmethod
     def walk(cls, ind, start, end):
 
-        close, rsi, time_index = ind["close"], ind["rsi"], ind["time"]
+        close, rsi, ema200, time_index = ind["close"], ind["rsi"], ind["ema200"], ind["time"]
 
         phase = "WATCHING"
 
@@ -103,10 +113,12 @@ class RSIDivergenceStrategy:
         # second_leg_rsi/second_leg_price: once bounced, the lowest
         # point of whatever comes next - deliberately allowed to be
         # HIGHER than the base (that's the divergence case), tracked
-        # regardless of direction relative to the base.
+        # regardless of direction relative to the base. second_leg_ema200
+        # is the 200 EMA reading at that same second-leg bar, purely for
+        # the support/resistance confluence check at entry time.
         base_rsi = base_price = None
         bounced_from_base = False
-        second_leg_rsi = second_leg_price = None
+        second_leg_rsi = second_leg_price = second_leg_ema200 = None
         divergence_locked = False
 
         trace = []
@@ -125,14 +137,14 @@ class RSIDivergenceStrategy:
                     phase = "BASE_LONG"
                     base_rsi, base_price = r, price
                     bounced_from_base = False
-                    second_leg_rsi = second_leg_price = None
+                    second_leg_rsi = second_leg_price = second_leg_ema200 = None
                     divergence_locked = False
 
                 elif r >= cls.OVERBOUGHT_TOUCH:
                     phase = "BASE_SHORT"
                     base_rsi, base_price = r, price
                     bounced_from_base = False
-                    second_leg_rsi = second_leg_price = None
+                    second_leg_rsi = second_leg_price = second_leg_ema200 = None
                     divergence_locked = False
 
             elif phase == "BASE_LONG":
@@ -146,6 +158,7 @@ class RSIDivergenceStrategy:
 
                 elif second_leg_rsi is None or r < second_leg_rsi:
                     second_leg_rsi, second_leg_price = r, price
+                    second_leg_ema200 = float(ema200.iloc[i]) if pd.notna(ema200.iloc[i]) else None
                     divergence_locked = second_leg_price <= base_price and second_leg_rsi > base_rsi + cls.MIN_DIVERGENCE_MARGIN
 
                 elif divergence_locked and r >= second_leg_rsi + cls.CONFIRM_MARGIN:
@@ -154,6 +167,7 @@ class RSIDivergenceStrategy:
                     divergence_points = {
                         "base_rsi": base_rsi, "base_price": base_price,
                         "second_leg_rsi": second_leg_rsi, "second_leg_price": second_leg_price,
+                        "ema200_support": cls._near_ema200(second_leg_price, second_leg_ema200),
                     }
                     phase = "WATCHING"
 
@@ -163,7 +177,7 @@ class RSIDivergenceStrategy:
                     phase = "BASE_SHORT"
                     base_rsi, base_price = r, price
                     bounced_from_base = False
-                    second_leg_rsi = second_leg_price = None
+                    second_leg_rsi = second_leg_price = second_leg_ema200 = None
                     divergence_locked = False
 
             elif phase == "BASE_SHORT":
@@ -177,6 +191,7 @@ class RSIDivergenceStrategy:
 
                 elif second_leg_rsi is None or r > second_leg_rsi:
                     second_leg_rsi, second_leg_price = r, price
+                    second_leg_ema200 = float(ema200.iloc[i]) if pd.notna(ema200.iloc[i]) else None
                     divergence_locked = second_leg_price >= base_price and second_leg_rsi < base_rsi - cls.MIN_DIVERGENCE_MARGIN
 
                 elif divergence_locked and r <= second_leg_rsi - cls.CONFIRM_MARGIN:
@@ -185,6 +200,7 @@ class RSIDivergenceStrategy:
                     divergence_points = {
                         "base_rsi": base_rsi, "base_price": base_price,
                         "second_leg_rsi": second_leg_rsi, "second_leg_price": second_leg_price,
+                        "ema200_support": cls._near_ema200(second_leg_price, second_leg_ema200),
                     }
                     phase = "WATCHING"
 
@@ -194,7 +210,7 @@ class RSIDivergenceStrategy:
                     phase = "BASE_LONG"
                     base_rsi, base_price = r, price
                     bounced_from_base = False
-                    second_leg_rsi = second_leg_price = None
+                    second_leg_rsi = second_leg_price = second_leg_ema200 = None
                     divergence_locked = False
 
             trace.append({
@@ -226,6 +242,20 @@ class RSIDivergenceStrategy:
         return trace, df
 
     @classmethod
+    def _near_ema200(cls, price, ema200_value):
+        """
+        True if the second-leg swing point sat within
+        EMA200_CONFLUENCE_PCT of the 200 EMA - "taking the 200 EMA as
+        support/resistance" at the exact moment the divergence formed,
+        not just somewhere nearby in time.
+        """
+
+        if price is None or ema200_value is None or ema200_value == 0:
+            return False
+
+        return abs(price - ema200_value) / ema200_value * 100 <= cls.EMA200_CONFLUENCE_PCT
+
+    @classmethod
     def describe(cls, trace):
         """
         Plain-English read of the CURRENT state, for a live screener/
@@ -247,15 +277,17 @@ class RSIDivergenceStrategy:
         recent = bars_since_event is not None and bars_since_event <= 3
 
         if recent and last_event_bar["event"] == "ENTRY_LONG_DIVERGENCE":
+            ema_note = " Also taking the 200 EMA as support — double confirmation." if (last_event_bar["divergence_points"] or {}).get("ema200_support") else ""
             return (
-                f"🟢 Div1 (bullish) entry {bars_since_event} bar(s) ago — RSI divergence confirmed, RSI {rsi}.",
+                f"🟢 Div1 (bullish) entry {bars_since_event} bar(s) ago — RSI divergence confirmed, RSI {rsi}.{ema_note}",
                 "ENTRY_LONG_DIVERGENCE",
                 last_event_bar["time"],
             )
 
         if recent and last_event_bar["event"] == "ENTRY_SHORT_DIVERGENCE":
+            ema_note = " Also rejecting the 200 EMA as resistance — double confirmation." if (last_event_bar["divergence_points"] or {}).get("ema200_support") else ""
             return (
-                f"🔴 Div2 (bearish) entry {bars_since_event} bar(s) ago — RSI divergence confirmed, RSI {rsi}.",
+                f"🔴 Div2 (bearish) entry {bars_since_event} bar(s) ago — RSI divergence confirmed, RSI {rsi}.{ema_note}",
                 "ENTRY_SHORT_DIVERGENCE",
                 last_event_bar["time"],
             )
