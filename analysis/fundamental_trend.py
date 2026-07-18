@@ -63,7 +63,13 @@ class FundamentalTrendEngine:
             "margin_trend": 0,
             "roe_trend": 0,
             "analyst_trend": 0,
+            "eps_trend": 0,
             "quarters_available": 0,
+            "was_loss_now_profit": False,
+            "latest_net_income": None,
+            "latest_revenue": None,
+            "latest_eps": None,
+            "previous_eps": None,
         }
 
         try:
@@ -78,6 +84,7 @@ class FundamentalTrendEngine:
 
         revenue = None
         net_income = None
+        eps = None
 
         if income is not None and not income.empty:
 
@@ -87,12 +94,34 @@ class FundamentalTrendEngine:
             if "Net Income" in income.index:
                 net_income = income.loc["Net Income"].tolist()
 
+            if "Diluted EPS" in income.index:
+                eps = income.loc["Diluted EPS"].tolist()
+
         if revenue:
             result["revenue_trend"] = cls._trend_direction(revenue)
             result["quarters_available"] = len([v for v in revenue if v is not None])
+            result["latest_revenue"] = revenue[0]
 
         if net_income:
             result["earnings_trend"] = cls._trend_direction(net_income)
+            result["latest_net_income"] = net_income[0]
+
+            # yfinance orders most-recent-first - a genuine loss-to-profit
+            # turnaround means the latest quarter is positive while at
+            # least one earlier quarter (not necessarily the very last)
+            # was negative, so a single bad quarter years ago doesn't
+            # get flagged as "just turned around" forever.
+            clean_ni = [v for v in net_income if v is not None]
+            if len(clean_ni) >= 2 and clean_ni[0] > 0:
+                result["was_loss_now_profit"] = any(v < 0 for v in clean_ni[1:])
+
+        if eps:
+            result["eps_trend"] = cls._trend_direction(eps)
+            clean_eps = [v for v in eps if v is not None]
+            if clean_eps:
+                result["latest_eps"] = clean_eps[0]
+            if len(clean_eps) >= 2:
+                result["previous_eps"] = clean_eps[1]
 
         if revenue and net_income and len(revenue) == len(net_income):
 

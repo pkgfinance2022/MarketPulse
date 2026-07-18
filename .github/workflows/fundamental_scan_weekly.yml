@@ -1,0 +1,41 @@
+name: Weekly fundamentals scan
+
+# Runs independently of the Streamlit app, same reasoning as
+# telegram_scan.yml - fundamentals stay pre-loaded on a predictable
+# schedule regardless of whether anyone has the dashboard open.
+# Weekly, not more often - fundamentals change at most quarterly, so
+# even weekly is already far more frequent than needed; this is about
+# a reliable snapshot cadence for week-over-week comparison, not
+# catching same-day changes.
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"   # 03:00 UTC every Monday
+  workflow_dispatch: {}     # lets you trigger a run manually from the Actions tab, for testing
+
+permissions:
+  contents: write   # needed to commit the updated fundamentals snapshot back to the repo
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run weekly fundamentals scan
+        run: python scripts/fundamental_scan_weekly.py
+
+      - name: Commit updated fundamentals snapshot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add database/fundamentals_history/ database/fundamentals_latest.csv
+          git diff --cached --quiet && echo "No change - skipping commit" || git commit -m "Update weekly fundamentals snapshot [skip ci]"
+          git push

@@ -30,6 +30,7 @@ from core.loader import AssetLoader
 from dashboard.services.alert_log import AlertLog
 from dashboard.services.dashboard_loader import DashboardLoader
 from dashboard.services.fundamental_scan_service import FundamentalScanService
+from dashboard.services import fundamental_insights
 from dashboard.services.ticker_aliases import resolve_ticker
 from dashboard.services import trusted_ips
 from dashboard.services.reversal_status import ReversalStatusService
@@ -3246,6 +3247,64 @@ def _render_weekly_backtest_section(ticker, window_days):
     )
 
 
+FUNDAMENTAL_HIGHLIGHT_SECTIONS = [
+    ("loss_to_profit", "📈 Loss → Profit turnarounds"),
+    ("eps_up", "💹 Biggest EPS increases"),
+    ("pe_compressed", "🟢 Getting cheaper (PE dropping week over week)"),
+    ("pe_expanded", "🔴 Getting pricier (PE rising week over week)"),
+    ("top_improving", "⭐ Most improving fundamentals"),
+    ("top_declining", "⚠️ Most declining fundamentals"),
+]
+
+
+def render_fundamental_insights_tab():
+    """
+    Reads database/fundamentals_latest.csv - written once a week by
+    scripts/fundamental_scan_weekly.py via a GitHub Actions workflow,
+    same "pre-loaded regardless of whether the app is open" reasoning
+    as the Telegram scanner. This tab never fetches anything live -
+    the "where to focus" highlights come first, the full table (every
+    scanned company) is below in an expander for reference.
+    """
+
+    st.subheader("🧠 Fundamentals Insights — US & India, updated weekly")
+    st.caption(
+        "Loaded from a snapshot scanned once a week (GitHub Actions, independent of this app "
+        "being open) - never fetched live here. \"Where to focus\" highlights first, the full "
+        "table is below."
+    )
+
+    df, latest_date, previous_date = fundamental_insights.load_snapshot()
+
+    if df.empty:
+        st.info(
+            "No snapshot yet - the weekly scan hasn't run. If you don't want to wait for the "
+            "schedule, trigger \"Weekly fundamentals scan\" manually from the GitHub Actions tab."
+        )
+        return
+
+    if latest_date:
+        compare_note = f" — compared against {previous_date}" if previous_date else " — first snapshot, no week-over-week comparison yet"
+        st.caption(f"📅 Data loaded on: **{latest_date}**{compare_note} · {len(df)} companies scanned")
+
+    highlights = fundamental_insights.derive_highlights(df)
+
+    if not highlights:
+        st.success("Nothing notable stands out this week.")
+    else:
+        for key, title in FUNDAMENTAL_HIGHLIGHT_SECTIONS:
+
+            if key not in highlights:
+                continue
+
+            st.markdown(f"**{title}**")
+            st.dataframe(highlights[key], use_container_width=True, hide_index=True)
+            st.divider()
+
+    with st.expander("📋 Full table — every scanned company"):
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+
 def render_fundamentals_tab():
     """
     On-demand only, by design (see fundamental_scan.py's docstring) -
@@ -3669,8 +3728,8 @@ def main():
     # never actually scanned (stale/fake), duplicating Command Center
     # without the fix; its AI Score/chart/stock-details features had
     # no unique value the four specialized tabs don't already cover.
-    tab_command, tab_weekly, tab_ema_watch, tab_notifications, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals, tab_algo_test = st.tabs(
-        ["🎯 Command Center", "🗓 Weekly Report", "📍 200 EMA Watch", "🔔 Notifications", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals", "🧪 Algo Test"]
+    tab_command, tab_weekly, tab_ema_watch, tab_notifications, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals, tab_fund_insights, tab_algo_test = st.tabs(
+        ["🎯 Command Center", "🗓 Weekly Report", "📍 200 EMA Watch", "🔔 Notifications", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals", "🧠 Fundamentals Insights", "🧪 Algo Test"]
     )
 
     with tab_command:
@@ -3699,6 +3758,9 @@ def main():
 
     with tab_fundamentals:
         render_fundamentals_tab()
+
+    with tab_fund_insights:
+        render_fundamental_insights_tab()
 
     with tab_algo_test:
         render_algo_test_tab()

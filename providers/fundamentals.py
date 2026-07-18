@@ -28,6 +28,8 @@ class FundamentalsProvider:
         "earningsQuarterlyGrowth",
         "debtToEquity",
         "profitMargins",
+        "trailingEps",
+        "forwardEps",
     ]
 
     def __init__(self):
