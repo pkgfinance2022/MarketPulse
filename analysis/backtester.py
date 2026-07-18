@@ -29,6 +29,7 @@ import ta
 
 from analysis.reversal_playbook import ReversalPlaybook
 from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
+from analysis.rsi_divergence_strategy import RSIDivergenceStrategy
 from analysis.rsi_wave_strategy import RSIWaveStrategy
 from dashboard.services.rsi_wave_status import RSIWaveStatusService
 from dashboard.services.time_utils import now_cet
@@ -178,6 +179,63 @@ def backtest_rsi_wave(ticker, window_days, period="730d"):
 
         trades.append({
             "time": bar["time"], "engine": "RSI Wave", "type": kind,
+            "direction": direction, "entry": price, "stop": levels["stop"], "target": levels["target1"],
+            **outcome,
+        })
+
+    return {"trades": trades, "summary": summarize_trades(trades)}
+
+
+RSI_DIVERGENCE_ENTRY_EVENTS = (
+    "ENTRY_LONG_DIVERGENCE", "ENTRY_LONG_NO_DIVERGENCE",
+    "ENTRY_SHORT_DIVERGENCE", "ENTRY_SHORT_NO_DIVERGENCE",
+)
+
+
+def backtest_rsi_divergence(ticker, window_days, period="730d"):
+    """
+    RSI early-cross divergence (1H) - every 40/60-cross entry in the
+    window, tagged Divergence vs No Divergence. Reuses RSI Wave's exact
+    stop/target formula (RSIWaveStatusService._stop_target) - same risk
+    model, just a different, earlier trigger condition being tested.
+    """
+
+    trace, df = RSIDivergenceStrategy.run_symbol(ticker, period=period)
+
+    if not trace:
+        return None
+
+    cutoff = _cutoff(window_days)
+    high, low, close = df["High"], df["Low"], df["Close"]
+
+    atr = ta.volatility.average_true_range(high, low, close, window=RSIWaveStatusService.ATR_WINDOW)
+    support = low.rolling(RSIWaveStatusService.SUPPORT_RESISTANCE_WINDOW).min()
+    resistance = high.rolling(RSIWaveStatusService.SUPPORT_RESISTANCE_WINDOW).max()
+
+    trades = []
+
+    for bar in trace:
+
+        if bar["event"] not in RSI_DIVERGENCE_ENTRY_EVENTS or _naive(bar["time"]) < cutoff:
+            continue
+
+        direction = "LONG" if "LONG" in bar["event"] else "SHORT"
+        divergence = "Divergence" if "NO_DIVERGENCE" not in bar["event"] else "No divergence"
+        idx = bar["index"]
+        price = bar["price"]
+
+        atr_val = float(atr.iloc[idx]) if pd.notna(atr.iloc[idx]) else 0.0
+        support_val = float(support.iloc[idx]) if pd.notna(support.iloc[idx]) else price
+        resistance_val = float(resistance.iloc[idx]) if pd.notna(resistance.iloc[idx]) else price
+
+        levels = RSIWaveStatusService._stop_target(direction, price, support_val, resistance_val, atr_val)
+        outcome = simulate_outcome(high, low, close, idx, direction, price, levels["stop"], levels["target1"])
+
+        if outcome is None:
+            continue
+
+        trades.append({
+            "time": bar["time"], "engine": "RSI Divergence", "type": divergence,
             "direction": direction, "entry": price, "stop": levels["stop"], "target": levels["target1"],
             **outcome,
         })
