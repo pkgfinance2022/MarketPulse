@@ -33,6 +33,7 @@ single slot first blocks everyone else) - exactly the "Global Indices
 not ready for 10 minutes" symptom this was built to prevent.
 """
 
+import hashlib
 import pickle
 import threading
 import time
@@ -49,41 +50,51 @@ _scan_semaphores = defaultdict(lambda: threading.Semaphore(1))
 # doesn't have to sit through a multi-minute rescan before it can show
 # anything - it loads straight from the last real result instead.
 #
-# Tagged with the git commit the scan actually ran under (see
-# _current_commit_hash below), read directly from .git/ rather than
-# shelling out to the git binary (which may not exist in every
-# container). A persisted result from a different commit than the one
-# currently running is discarded on load rather than trusted - the
-# analysis code itself may have changed since that scan ran, and an
-# old result computed under different logic isn't "the same past
-# finding", it's just wrong. The routine hourly/10-min staleness cycle
-# will naturally recompute it either way; this only controls what's
-# shown in the meantime.
+# Tagged with a fingerprint of the code that actually determines a
+# scan's output (see _scan_logic_fingerprint below) - a persisted
+# result computed under different analysis/provider logic isn't "the
+# same past finding", it's just wrong, so it's discarded on load
+# rather than trusted. Deliberately scoped to just those modules
+# rather than "any commit" (the previous approach, keyed to the git
+# HEAD commit): on a day with dozens of commits touching UI-only files
+# (app.py copy tweaks, a new tab, README edits), that discarded every
+# tab's perfectly good cached scan on every single restart even though
+# nothing that affects a scan's actual output had changed - exactly
+# the "reloading everything, every time" pain this cache exists to
+# avoid. The routine hourly/10-min staleness cycle will naturally
+# recompute it either way; this only controls what's shown in the
+# meantime.
 CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "database" / "universe_cache"
 
+# Every directory/module whose code path a _scan_*_data() function in
+# app.py transitively runs through to produce row data - i.e. what
+# would make a previously-cached result actually wrong if changed.
+# Deliberately excludes dashboard/app.py and dashboard/widgets/ (pure
+# rendering - changing a label or adding a tab doesn't change what a
+# scan computes).
+_SCAN_LOGIC_ROOTS = ["analysis", "providers", "core", "dashboard/services"]
 
-def _current_commit_hash():
 
-    git_dir = Path(__file__).resolve().parent.parent.parent / ".git"
-    head_file = git_dir / "HEAD"
+def _scan_logic_fingerprint():
 
-    if not head_file.exists():
-        return None
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    hasher = hashlib.sha256()
 
-    try:
-        content = head_file.read_text().strip()
-    except OSError:
-        return None
+    paths = []
+    for root_name in _SCAN_LOGIC_ROOTS:
+        root = repo_root / root_name
+        if root.exists():
+            paths.extend(p for p in root.rglob("*.py") if "__pycache__" not in p.parts)
 
-    if not content.startswith("ref:"):
-        return content  # detached HEAD - already a commit hash
+    for path in sorted(paths, key=lambda p: p.relative_to(repo_root).as_posix()):
 
-    ref_path = git_dir / content.split(" ", 1)[1]
+        try:
+            hasher.update(path.relative_to(repo_root).as_posix().encode())
+            hasher.update(path.read_bytes())
+        except OSError:
+            continue
 
-    try:
-        return ref_path.read_text().strip()
-    except OSError:
-        return None
+    return hasher.hexdigest()
 
 
 def _load_persisted_cache():
@@ -98,7 +109,7 @@ def _load_persisted_cache():
     if not CACHE_DIR.exists():
         return
 
-    current_commit = _current_commit_hash()
+    current_fingerprint = _scan_logic_fingerprint()
 
     for path in CACHE_DIR.glob("*.pkl"):
 
@@ -108,7 +119,7 @@ def _load_persisted_cache():
         except (pickle.PickleError, EOFError, OSError, AttributeError):
             continue
 
-        if current_commit is None or saved.get("git_commit") != current_commit:
+        if saved.get("logic_fingerprint") != current_fingerprint:
             continue
 
         _cache[path.stem] = {
@@ -125,7 +136,7 @@ def _persist(prefix, entry):
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
         with open(CACHE_DIR / f"{prefix}.pkl", "wb") as f:
-            pickle.dump({"data": entry["data"], "ts": entry["ts"], "git_commit": _current_commit_hash()}, f)
+            pickle.dump({"data": entry["data"], "ts": entry["ts"], "logic_fingerprint": _scan_logic_fingerprint()}, f)
 
     except (pickle.PickleError, OSError):
         pass  # best-effort - a failed write just means the next process starts cold, same as today
