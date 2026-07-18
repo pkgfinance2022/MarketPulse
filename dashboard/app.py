@@ -34,6 +34,7 @@ from dashboard.services.ticker_aliases import resolve_ticker
 from dashboard.services import trusted_ips
 from dashboard.services.reversal_status import ReversalStatusService
 from dashboard.services.reversal_status_daily import DailyReversalStatusService
+from dashboard.services.pattern_status import ChartPatternStatusService, PATTERN_STATE_LABELS
 from dashboard.services.rsi_divergence_status import RSIDivergenceStatusService
 from dashboard.services.rsi_wave_status import RSIWaveStatusService
 from dashboard.services.stock_news_service import StockNewsService
@@ -109,7 +110,7 @@ def _scan_eta_text(cache_entry):
 _format_event_time = time_utils.format_event_time
 
 
-NOTIFY_BASELINE_KEYS = ["wave_states", "wave_states_seeded", "reversal_states", "reversal_states_seeded", "divergence_states", "divergence_states_seeded"]
+NOTIFY_BASELINE_KEYS = ["wave_states", "wave_states_seeded", "reversal_states", "reversal_states_seeded", "divergence_states", "divergence_states_seeded", "pattern_states", "pattern_states_seeded"]
 
 for _prefix, _country, _title in [("us", None, None), ("india", None, None), ("crypto", None, None)]:
     NOTIFY_BASELINE_KEYS += [
@@ -145,6 +146,8 @@ def init_state():
         "reversal_states_seeded": persisted.get("reversal_states_seeded", False),
         "divergence_states": persisted.get("divergence_states", {}),
         "divergence_states_seeded": persisted.get("divergence_states_seeded", False),
+        "pattern_states": persisted.get("pattern_states", {}),
+        "pattern_states_seeded": persisted.get("pattern_states_seeded", False),
         "fundamental_scan_result": None,
     }
 
@@ -608,6 +611,105 @@ def check_for_new_divergence_signals():
     render_notification_trigger(browser_entries)
 
 
+@st.fragment(run_every=300)
+def check_for_new_pattern_signals():
+    """
+    Same pattern as check_for_new_divergence_signals(), for chart
+    patterns instead - Global Indices only, Piercing Pattern + Double
+    Bottom only (see analysis/candlestick_patterns.py for why the
+    other four didn't make the cut). Both are LONG-only - nothing here
+    fires short.
+    """
+
+    market = st.session_state.global_market
+
+    if market is None:
+        return
+
+    tickers = market["df"]["Ticker"].tolist()
+    name_map = dict(zip(market["df"]["Ticker"], market["df"]["Name"]))
+
+    current_states = ChartPatternStatusService.screen_states(tickers)
+    previous_states = st.session_state.pattern_states
+    is_first_check = not st.session_state.pattern_states_seeded
+
+    new_signals = (
+        []
+        if is_first_check
+        else [
+            {
+                "ticker": ticker,
+                "name": name_map.get(ticker, ticker),
+                "state": info["state"],
+                "price": info["price"],
+            }
+            for ticker, info in current_states.items()
+            if info["state"] in PATTERN_STATE_LABELS and info["state"] != "WATCHING"
+            and (previous_states.get(ticker) or {}).get("state") != info["state"]
+        ]
+    )
+
+    st.session_state.pattern_states = current_states
+    st.session_state.pattern_states_seeded = True
+    _persist_notify_baseline()
+
+    browser_entries = []
+
+    for signal in new_signals:
+
+        # Cross-session, cross-restart dedup - see check_for_new_entries().
+        if AlertLog.recently_logged(signal["ticker"], "LONG"):
+            continue
+
+        price = round(signal["price"], 4) if signal["price"] is not None else "?"
+        signal_label = PATTERN_STATE_LABELS.get(signal["state"], signal["state"])
+        event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
+
+        full_status = ChartPatternStatusService.analyse(signal["ticker"])
+        stop_target = full_status["stop_target"] if full_status else None
+
+        levels = (
+            f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
+            if stop_target and stop_target.get("stop") is not None
+            else ""
+        )
+
+        description = full_status["description"] if full_status else ""
+        message = (
+            f"🟢 {signal['name']} ({signal['ticker']}) — {signal_label}\n"
+            f"{event_time}\nPrice {price}{levels}\n{description}"
+        )
+
+        st.toast(f"{signal_label}: {signal['name']}", icon="🟢")
+
+        if TelegramNotifier.is_configured():
+            TelegramNotifier.send(message)
+
+        AlertLog.log_alert(
+            signal["ticker"],
+            signal["name"],
+            "LONG",
+            signal["price"],
+            None,
+            stop_target,
+            source="Global Indices",
+            signal_type=signal_label.split(" — ")[0].replace("🟢 ", ""),
+        )
+
+        browser_entries.append(
+            {
+                "ticker": signal["ticker"],
+                "name": signal["name"],
+                "direction": "LONG",
+                "price": signal["price"],
+                "rsi": None,
+                "stop_target": stop_target,
+            }
+        )
+
+    render_notification_trigger(browser_entries)
+
+
 GLOBAL_INDICES_REFRESH_SECONDS = 600   # faster than the universe tabs' hourly cadence (this is the "live, intraday" tab), but not so fast it re-fires the 4-engine scan pointlessly often
 
 # US market open (9:30 ET) usually lands at 15:30 CET, but shifts to 14:30
@@ -731,8 +833,20 @@ def _scan_global_indices_data(sector):
         df["RSI Divergence Full"] = df["Ticker"].map({t: info["description"] for t, info in divergence_states.items()}).fillna("")
         df["RSI Divergence Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in divergence_states.items()}).fillna("—")
 
+        # Chart Patterns (Daily) - Piercing Pattern + Double Bottom only,
+        # the two candlestick/chart patterns that actually backtested
+        # positive on real Global Indices data (see
+        # analysis/candlestick_patterns.py) - Global Indices only,
+        # same explicit scope as RSI Divergence.
+        pattern_states = ChartPatternStatusService.screen_states(tickers)
+        pattern_labels = {t: PATTERN_STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in pattern_states.items()}
+        df["Chart Patterns"] = df["Ticker"].map(pattern_labels).fillna("⚪ Watching")
+        df["Chart Patterns Full"] = df["Ticker"].map({t: info["description"] for t, info in pattern_states.items()}).fillna("")
+        df["Chart Patterns Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in pattern_states.items()}).fillna("—")
+
     else:
         divergence_states = {}
+        pattern_states = {}
 
     return {
         "df": df,
@@ -742,6 +856,7 @@ def _scan_global_indices_data(sector):
         "wave_states": wave_states,
         "reversal_states": reversal_states,
         "divergence_states": divergence_states,
+        "pattern_states": pattern_states,
     }
 
 
@@ -1708,6 +1823,7 @@ def render_global_indices_tab(meta):
     check_for_new_entries()
     check_for_new_reversal_signals()
     check_for_new_divergence_signals()
+    check_for_new_pattern_signals()
 
     st.divider()
     render_parked_trades()
@@ -2509,6 +2625,7 @@ COMMAND_CENTER_COLUMNS = [
     ("Reversal", "Reversal Full", "Reversal Timestamp", "Hourly", ("signal", "trigger", "continuation")),
     ("Daily Reversal", "Daily Reversal Full", "Daily Reversal Timestamp", "Daily", ("signal", "trigger", "continuation")),
     ("RSI Divergence", "RSI Divergence Full", "RSI Divergence Timestamp", "Hourly", ("entry",)),
+    ("Chart Patterns", "Chart Patterns Full", "Chart Patterns Timestamp", "Daily", ("entry",)),
 ]
 
 # RSI Divergence is Hourly on purpose for US Stocks too (unlike Setup/
