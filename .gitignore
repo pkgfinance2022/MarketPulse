@@ -50,6 +50,7 @@ database/alert_log.csv
 database/positions.csv
 database/trusted_ips.csv
 database/command_center_latest.xlsx
+database/weekly_report_latest.xlsx
 database/universe_cache/
 database/notify_baseline.pkl
 backtest_results*.csv

@@ -1313,15 +1313,18 @@ def render_weekly_report_tab():
 
     st.divider()
 
+    source_breakdown = _alert_breakdown(week_df, "Source")
+    signal_breakdown = _alert_breakdown(week_df, "SignalType")
+
     col1, col2 = st.columns(2)
 
     with col1:
         st.markdown("**By source**")
-        st.dataframe(_alert_breakdown(week_df, "Source"), use_container_width=True, hide_index=True)
+        st.dataframe(source_breakdown, use_container_width=True, hide_index=True)
 
     with col2:
         st.markdown("**By signal type**")
-        st.dataframe(_alert_breakdown(week_df, "SignalType"), use_container_width=True, hide_index=True)
+        st.dataframe(signal_breakdown, use_container_width=True, hide_index=True)
 
     st.markdown("**By day**")
     by_day = week_df.copy()
@@ -1355,6 +1358,47 @@ def render_weekly_report_tab():
             )
     else:
         st.caption("Nothing closed yet this week to rank a best/worst mover.")
+
+    _export_weekly_report_excel(week_df, source_breakdown, signal_breakdown)
+
+
+def _export_weekly_report_excel(week_df, source_breakdown, signal_breakdown):
+    """
+    Same download-button + local-file pattern as Command Center's own
+    export (see _export_command_center_excel) - a multi-sheet workbook
+    here since the weekly report has three distinct views (the raw
+    alert list, and two breakdowns) worth keeping separate rather than
+    flattened into one sheet.
+    """
+
+    display_cols = [
+        "Timestamp", "Source", "SignalType", "Ticker", "Name", "Direction",
+        "EntryPrice", "Stop", "Target1", "Status", "ReturnPct", "ClosedAt",
+    ]
+    alerts_sheet = week_df[display_cols].sort_values("Timestamp", ascending=False)
+
+    def _write(target):
+        with pd.ExcelWriter(target, engine="openpyxl") as writer:
+            alerts_sheet.to_excel(writer, index=False, sheet_name="Alerts")
+            source_breakdown.to_excel(writer, index=False, sheet_name="By Source")
+            signal_breakdown.to_excel(writer, index=False, sheet_name="By Signal Type")
+
+    buffer = io.BytesIO()
+    _write(buffer)
+    buffer.seek(0)
+
+    st.download_button(
+        "⬇️ Export Weekly Report to Excel",
+        data=buffer,
+        file_name=f"weekly_report_{time_utils.now_cet().strftime('%Y-%m-%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="weekly_report_export_btn",
+    )
+
+    try:
+        _write(PROJECT_ROOT / "database" / "weekly_report_latest.xlsx")
+    except Exception:
+        pass
 
 
 ALERT_TYPE_MEANINGS = {
