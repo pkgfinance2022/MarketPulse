@@ -22,7 +22,7 @@ class Header:
 
             st.metric(
                 "Updated (CET)",
-                now_cet().strftime("%H:%M:%S")
+                now_cet().strftime("%I:%M:%S %p")
             )
 
         st.divider()
