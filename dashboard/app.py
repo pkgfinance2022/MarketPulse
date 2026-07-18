@@ -1424,8 +1424,27 @@ def _load_combined_alert_log():
     return pd.concat([local_df, gh_df], ignore_index=True)
 
 
+@st.fragment(run_every=300)
+def _auto_evaluate_alerts():
+    """
+    Automatically re-checks every still-OPEN alert against the latest
+    price every 5 minutes, instead of only when someone happens to
+    click "Check alert outcomes" - an alert that already hit its
+    target/stop was otherwise sitting marked OPEN indefinitely (and
+    excluded from the win-rate stats) until a manual click, which could
+    be hours or days after the fact. Silent (no toast) - this is
+    housekeeping on the log, not a new signal to announce.
+    """
+
+    AlertLog.evaluate()
+
+    if GH_ALERT_LOG_PATH.exists():
+        AlertLog.evaluate(path=GH_ALERT_LOG_PATH)
+
+
 def render_notifications_tab():
 
+    _auto_evaluate_alerts()
     render_notifications_feed()
     st.divider()
     render_alert_tracking()
