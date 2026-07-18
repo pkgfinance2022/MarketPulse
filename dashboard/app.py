@@ -34,6 +34,8 @@ from dashboard.services.ticker_aliases import resolve_ticker
 from dashboard.services import trusted_ips
 from dashboard.services.reversal_status import ReversalStatusService
 from dashboard.services.reversal_status_daily import DailyReversalStatusService
+from analysis.ema_proximity import PROXIMITY_TOLERANCE_PCT
+from dashboard.services.ema_proximity_status import EMAProximityStatusService
 from dashboard.services.pattern_status import ChartPatternStatusService, PATTERN_STATE_LABELS
 from dashboard.services.rsi_divergence_status import RSIDivergenceStatusService
 from dashboard.services.rsi_wave_status import RSIWaveStatusService
@@ -64,6 +66,8 @@ UNIVERSE_TABS = [
 ]
 
 UNIVERSE_REFRESH_SECONDS = 3600   # full stock/crypto universes are much bigger than Global Indices - a slow, once-an-hour cadence keeps yfinance usage sane (explicitly requested)
+
+EMA_PROXIMITY_REFRESH_SECONDS = 86400   # once a day, explicitly requested - Weekly/Monthly bars don't change intra-day anyway
 
 
 def _format_duration(seconds):
@@ -3520,6 +3524,116 @@ def _warm_background_scans():
     if global_stale:
         universe_cache.start_scan("global_All", lambda: _scan_global_indices_data("All"), pool="global")
 
+    ema_entry = universe_cache.get("ema_proximity")
+    ema_stale = ema_entry is None or (not ema_entry["loading"] and (now - ema_entry["ts"]) >= EMA_PROXIMITY_REFRESH_SECONDS)
+    if ema_stale:
+        universe_cache.start_scan("ema_proximity", _scan_ema_proximity_data, pool="ema_proximity")
+
+
+EMA_PROXIMITY_SOURCE_LABELS = {"USA": "US Stocks", "India": "Indian Stocks", "Crypto": "Crypto", "Global": "Global Indices"}
+
+
+def _scan_ema_proximity_data():
+    """
+    Pure, background-thread-safe scan (no st.* calls) - screens every
+    asset across all four sources for Weekly-200 / Monthly-50 EMA
+    proximity (see analysis/ema_proximity.py). Stateless, so unlike the
+    other _scan_* functions there's no wave_states/reversal_states to
+    return alongside it - just the rows themselves.
+    """
+
+    assets = AssetLoader().all_assets()
+    name_map = {a.symbol: a.name for a in assets}
+    source_map = {a.symbol: a.country for a in assets}
+    symbols = list(name_map.keys())
+
+    states = EMAProximityStatusService.screen_states(symbols)
+
+    rows = []
+
+    for symbol, info in states.items():
+
+        weekly = info.get("weekly")
+        monthly = info.get("monthly")
+
+        if weekly is None and monthly is None:
+            continue
+
+        rows.append({
+            "Source": EMA_PROXIMITY_SOURCE_LABELS.get(source_map.get(symbol, ""), source_map.get(symbol, "")),
+            "Ticker": symbol,
+            "Name": name_map.get(symbol, symbol),
+            "Weekly Dist %": weekly["distance_pct"] if weekly else None,
+            "Weekly Near": weekly["near"] if weekly else False,
+            "Weekly Side": weekly["side"] if weekly else None,
+            "Monthly Dist %": monthly["distance_pct"] if monthly else None,
+            "Monthly Near": monthly["near"] if monthly else False,
+            "Monthly Side": monthly["side"] if monthly else None,
+        })
+
+    return {"rows": rows}
+
+
+def render_ema_proximity_tab():
+
+    st.subheader("📍 200 EMA Watch — Weekly & Monthly")
+    st.caption(
+        "Not a trade signal - just flags instruments currently trading within "
+        f"{PROXIMITY_TOLERANCE_PCT}% of a major long-term trend line (Weekly 200 EMA, Monthly 50 EMA - "
+        "Monthly deliberately uses a shorter period than Weekly, see analysis/ema_proximity.py), "
+        "worth a manual look. Scans all four sources once a day."
+    )
+
+    cache_entry = universe_cache.get("ema_proximity")
+
+    if cache_entry is None or cache_entry["data"] is None:
+        eta = _scan_eta_text(cache_entry) if cache_entry else "typically a few minutes across ~260 tickers"
+        st.info(f"Scanning for the first time — {eta}. Feel free to check other tabs meanwhile.")
+        return
+
+    if st.button("🔄 Rescan now", key="ema_proximity_rescan_btn"):
+        started = universe_cache.start_scan("ema_proximity", _scan_ema_proximity_data, pool="ema_proximity")
+        st.toast("Rescanning in the background..." if started else "Already scanning in the background...", icon="🔄")
+
+    last_ts = cache_entry["ts"]
+    age_minutes = round((time.time() - last_ts) / 60)
+    refreshed_at = time_utils.unix_to_cet(last_ts).strftime("%b %d, %H:%M CET")
+
+    if cache_entry["loading"]:
+        st.caption(f"🕐 Showing data from {refreshed_at} ({age_minutes} min ago) — a fresh scan is running in the background.")
+    else:
+        st.caption(f"🕐 Last scanned: {refreshed_at} ({age_minutes} min ago) — refreshes automatically once a day.")
+
+    rows = cache_entry["data"]["rows"]
+    df = pd.DataFrame(rows)
+
+    if df.empty:
+        st.warning("No data yet.")
+        return
+
+    near_weekly = df[df["Weekly Near"]].sort_values("Weekly Dist %", key=lambda s: s.abs())
+    near_monthly = df[df["Monthly Near"]].sort_values("Monthly Dist %", key=lambda s: s.abs())
+
+    st.markdown(f"**Near Weekly 200 EMA** ({len(near_weekly)})")
+    if near_weekly.empty:
+        st.caption("Nothing within tolerance right now.")
+    else:
+        st.dataframe(
+            near_weekly[["Source", "Ticker", "Name", "Weekly Dist %", "Weekly Side"]],
+            use_container_width=True, hide_index=True,
+        )
+
+    st.divider()
+
+    st.markdown(f"**Near Monthly 50 EMA** ({len(near_monthly)})")
+    if near_monthly.empty:
+        st.caption("Nothing within tolerance right now.")
+    else:
+        st.dataframe(
+            near_monthly[["Source", "Ticker", "Name", "Monthly Dist %", "Monthly Side"]],
+            use_container_width=True, hide_index=True,
+        )
+
 
 def main():
 
@@ -3555,8 +3669,8 @@ def main():
     # never actually scanned (stale/fake), duplicating Command Center
     # without the fix; its AI Score/chart/stock-details features had
     # no unique value the four specialized tabs don't already cover.
-    tab_command, tab_weekly, tab_notifications, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals, tab_algo_test = st.tabs(
-        ["🎯 Command Center", "🗓 Weekly Report", "🔔 Notifications", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals", "🧪 Algo Test"]
+    tab_command, tab_weekly, tab_ema_watch, tab_notifications, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals, tab_algo_test = st.tabs(
+        ["🎯 Command Center", "🗓 Weekly Report", "📍 200 EMA Watch", "🔔 Notifications", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals", "🧪 Algo Test"]
     )
 
     with tab_command:
@@ -3564,6 +3678,9 @@ def main():
 
     with tab_weekly:
         render_weekly_report_tab()
+
+    with tab_ema_watch:
+        render_ema_proximity_tab()
 
     with tab_notifications:
         render_notifications_tab()
