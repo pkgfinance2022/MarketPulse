@@ -73,14 +73,32 @@ class RSIWaveStatusService:
         }
 
     @staticmethod
-    def _stop_target(direction, price, support, resistance, atr):
+    def _price_round(value, price):
+        """
+        Same fix as ReversalPlaybook._price_round - round(x, 2) collapses
+        distinct levels to the same value for anything priced under ~10
+        (major forex pairs, mostly) since a whole cent there is ~100
+        pips. Confirmed on EUR/USD: a real stop/target gap of ~50 pips
+        (1.14377 vs 1.13843) both rounded to 1.14, making them
+        indistinguishable and corrupting the simulated outcome.
+        """
+
+        if value is None:
+            return None
+
+        decimals = 4 if abs(price) < 10 else 2
+
+        return round(value, decimals)
+
+    @classmethod
+    def _stop_target(cls, direction, price, support, resistance, atr):
 
         if direction == "LONG":
 
             stop = max(support, price - 2 * atr) if atr else support
             stop = min(stop, price - 0.0001)
 
-            risk = max(price - stop, 0.01)
+            risk = max(price - stop, price * 0.0001)
             target1 = resistance if resistance > price else price + risk * 2
             target2 = price + risk * 3
 
@@ -89,17 +107,17 @@ class RSIWaveStatusService:
             stop = min(resistance, price + 2 * atr) if atr else resistance
             stop = max(stop, price + 0.0001)
 
-            risk = max(stop - price, 0.01)
+            risk = max(stop - price, price * 0.0001)
             target1 = support if support < price else price - risk * 2
             target2 = price - risk * 3
 
         risk_reward = round(abs(target1 - price) / risk, 2) if risk else 0.0
 
         return {
-            "stop": round(stop, 2),
-            "target1": round(target1, 2),
-            "target2": round(target2, 2),
-            "risk": round(risk, 2),
+            "stop": cls._price_round(stop, price),
+            "target1": cls._price_round(target1, price),
+            "target2": cls._price_round(target2, price),
+            "risk": cls._price_round(risk, price),
             "risk_reward": risk_reward,
         }
 

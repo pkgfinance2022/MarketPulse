@@ -73,7 +73,23 @@ class RSIDivergenceStatusService:
         }
 
     @staticmethod
-    def _stop_target(direction, price, support, resistance, atr):
+    def _price_round(value, price):
+        """
+        Same fix as ReversalPlaybook._price_round / RSIWaveStatusService's
+        own copy - round(x, 2) collapses distinct stop/target levels to
+        the same value for anything priced under ~10 (major forex pairs),
+        since a whole cent there is ~100 pips.
+        """
+
+        if value is None:
+            return None
+
+        decimals = 4 if abs(price) < 10 else 2
+
+        return round(value, decimals)
+
+    @classmethod
+    def _stop_target(cls, direction, price, support, resistance, atr):
         """Identical formula to RSIWaveStatusService._stop_target - same
         risk model, kept duplicated rather than imported so this engine
         stays fully independent (matches DailyReversalStatusService's
@@ -84,7 +100,7 @@ class RSIDivergenceStatusService:
             stop = max(support, price - 2 * atr) if atr else support
             stop = min(stop, price - 0.0001)
 
-            risk = max(price - stop, 0.01)
+            risk = max(price - stop, price * 0.0001)
             target1 = resistance if resistance > price else price + risk * 2
             target2 = price + risk * 3
 
@@ -93,17 +109,17 @@ class RSIDivergenceStatusService:
             stop = min(resistance, price + 2 * atr) if atr else resistance
             stop = max(stop, price + 0.0001)
 
-            risk = max(stop - price, 0.01)
+            risk = max(stop - price, price * 0.0001)
             target1 = support if support < price else price - risk * 2
             target2 = price - risk * 3
 
         risk_reward = round(abs(target1 - price) / risk, 2) if risk else 0.0
 
         return {
-            "stop": round(stop, 2),
-            "target1": round(target1, 2),
-            "target2": round(target2, 2),
-            "risk": round(risk, 2),
+            "stop": cls._price_round(stop, price),
+            "target1": cls._price_round(target1, price),
+            "target2": cls._price_round(target2, price),
+            "risk": cls._price_round(risk, price),
             "risk_reward": risk_reward,
         }
 
