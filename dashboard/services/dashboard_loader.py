@@ -208,6 +208,23 @@ class DashboardLoader:
 
         return "⚪ No clear trend"
 
+    @staticmethod
+    def _price_round(value):
+        """
+        4 decimals for sub-$10 instruments (forex pairs like EUR/USD
+        need that much to show a real, distinguishable level), 2
+        otherwise - same convention already used by ReversalPlaybook/
+        RSIWaveStatusService/RSIDivergenceStatusService for stop/target
+        levels, applied here too so raw yfinance floats (e.g.
+        64766.109375) don't leak straight into every table's Price/EMA/
+        Support/Resistance columns.
+        """
+
+        if value is None:
+            return None
+
+        return round(value, 4 if abs(value) < 10 else 2)
+
     @classmethod
     def _canonical_row(cls, asset):
 
@@ -224,21 +241,21 @@ class DashboardLoader:
             "Country": asset.country,
             "Sector": asset.category,
             "Industry": asset.industry,
-            "Price": asset.summary.price or 0.0,
+            "Price": cls._price_round(asset.summary.price or 0.0),
             "Change %": asset.summary.change_1d or 0.0,
             "Volume": int(asset.summary.volume or 0),
             "Market Cap": cls._market_cap(asset),
-            "EMA20": d1.ema20 or 0.0,
-            "EMA50": d1.ema50 or 0.0,
-            "EMA200": d1.ema200 or 0.0,
+            "EMA20": cls._price_round(d1.ema20 or 0.0),
+            "EMA50": cls._price_round(d1.ema50 or 0.0),
+            "EMA200": cls._price_round(d1.ema200 or 0.0),
             "Trend": d1.trend or "Neutral",
-            "RSI": d1.rsi14 or 0.0,
+            "RSI": round(d1.rsi14 or 0.0, 2),
             "MACD": technical["MACD"],
             "ADX": technical["ADX"],
             "ATR": technical["ATR"],
-            "Support": technical["Support"],
-            "Resistance": technical["Resistance"],
-            "Stop Loss": technical["Stop Loss"],
+            "Support": cls._price_round(technical["Support"]),
+            "Resistance": cls._price_round(technical["Resistance"]),
+            "Stop Loss": cls._price_round(technical["Stop Loss"]),
             "Technical Score": technical["Technical Score"],
             "Fundamental Score": fundamental["fundamental_score"],
             "Momentum Score": 0,
@@ -374,7 +391,7 @@ class DashboardLoader:
             change_15m = time_based_pct_change(close, 15)
             change_1h = time_based_pct_change(close, 60)
 
-            df.at[idx, "Price"] = round(latest, 2)
+            df.at[idx, "Price"] = DashboardLoader._price_round(latest)
             df.at[idx, "15m %"] = change_15m if change_15m is not None else 0.0
             df.at[idx, "1H %"] = change_1h if change_1h is not None else 0.0
             df.at[idx, "Intraday %"] = round(0.4 * (change_15m or 0.0) + 0.6 * (change_1h or 0.0), 2)

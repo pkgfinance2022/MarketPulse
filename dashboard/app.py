@@ -2643,6 +2643,15 @@ COMMAND_CENTER_SOURCES = [
     ("🪙 Crypto", "crypto_market"),
 ]
 
+# Indian Stocks' buy/sell calls are deliberately excluded from Command
+# Center's aggregated tables (not from the Indian Stocks tab itself,
+# which is untouched) - per explicit instruction, not a call the user
+# ever intends to act on from here. India's 200 EMA Watch proximity
+# hits are shown instead (see _render_india_ema_watch below) - a
+# manual-review flag, not a trade call, which is the kind of India
+# signal actually wanted in this view.
+COMMAND_CENTER_BUYSELL_SOURCES = [(label, key) for label, key in COMMAND_CENTER_SOURCES if key != "india_market"]
+
 COMMAND_CENTER_COLUMNS = [
     # column, full-text column, timestamp column, base timeframe, keywords that identify an "act now" label (vs. watching/alert/forming), style
     ("Setup", "Setup Full", "Setup Timestamp", "Hourly", ("entry",), "📈 Momentum"),
@@ -2699,10 +2708,10 @@ COMMAND_CENTER_TIMEFRAME_TABLES = [
     ], COMMAND_CENTER_HOURLY_SOURCES),
     ("📆 Daily", "cc_daily", [
         ("Daily Reversal", "Daily Reversal Full", "Daily Reversal Timestamp"),
-    ], COMMAND_CENTER_SOURCES),
+    ], COMMAND_CENTER_BUYSELL_SOURCES),
     ("🗓 Weekly", "cc_weekly", [
         ("Weekly", "Weekly Full", "Weekly Timestamp"),
-    ], COMMAND_CENTER_SOURCES),
+    ], COMMAND_CENTER_BUYSELL_SOURCES),
 ]
 
 
@@ -2848,6 +2857,54 @@ def _command_center_timeframe(base_timeframe, why_text):
     return base_timeframe
 
 
+def _render_india_ema_watch():
+    """
+    Indian Stocks' buy/sell calls are deliberately left out of Command
+    Center (see COMMAND_CENTER_BUYSELL_SOURCES) - shown here instead:
+    which Indian tickers are currently near their Weekly 200 EMA /
+    Monthly 50 EMA (see analysis/ema_proximity.py), a manual-review
+    flag rather than a trade call. Reads the same "ema_proximity"
+    cache the 200 EMA Watch tab uses - no extra scan of its own.
+    """
+
+    cache_entry = universe_cache.get("ema_proximity")
+
+    if cache_entry is None or cache_entry["data"] is None:
+        return
+
+    rows = cache_entry["data"]["rows"]
+
+    if not rows:
+        return
+
+    df = pd.DataFrame(rows)
+    india_df = df[df["Source"] == "Indian Stocks"]
+
+    near_weekly = india_df[india_df["Weekly Near"]].sort_values("Weekly Dist %", key=lambda s: s.abs())
+    near_monthly = india_df[india_df["Monthly Near"]].sort_values("Monthly Dist %", key=lambda s: s.abs())
+
+    if near_weekly.empty and near_monthly.empty:
+        return
+
+    st.divider()
+    st.subheader("📍 Indian Stocks — Near 200 EMA")
+    st.caption("Not a trade call - just flags Indian tickers currently trading close to a major long-term trend line. See the 200 EMA Watch tab for the full picture across all sources.")
+
+    if not near_weekly.empty:
+        st.markdown(f"**Near Weekly 200 EMA** ({len(near_weekly)})")
+        st.dataframe(
+            near_weekly[["Ticker", "Name", "Weekly Dist %", "Weekly Side"]],
+            use_container_width=True, hide_index=True, key="cc_india_ema_weekly",
+        )
+
+    if not near_monthly.empty:
+        st.markdown(f"**Near Monthly 50 EMA** ({len(near_monthly)})")
+        st.dataframe(
+            near_monthly[["Ticker", "Name", "Monthly Dist %", "Monthly Side"]],
+            use_container_width=True, hide_index=True, key="cc_india_ema_monthly",
+        )
+
+
 def render_command_center_tab():
     """
     Plain (non-fragment) shell that calls two independent, sibling
@@ -2914,7 +2971,7 @@ def _render_command_center_signals():
     rows = []
     not_scanned = []
 
-    for label, session_key in COMMAND_CENTER_SOURCES:
+    for label, session_key in COMMAND_CENTER_BUYSELL_SOURCES:
 
         market = st.session_state.get(session_key)
 
@@ -3007,6 +3064,8 @@ def _render_command_center_signals():
 
     else:
         st.success("Nothing actionable right now across the tabs scanned so far.")
+
+    _render_india_ema_watch()
 
     # Deliberately NOT gated behind "rows" above (an early return here
     # used to skip everything below whenever there was nothing in the
