@@ -186,18 +186,16 @@ def backtest_rsi_wave(ticker, window_days, period="730d"):
     return {"trades": trades, "summary": summarize_trades(trades)}
 
 
-RSI_DIVERGENCE_ENTRY_EVENTS = (
-    "ENTRY_LONG_DIVERGENCE", "ENTRY_LONG_NO_DIVERGENCE",
-    "ENTRY_SHORT_DIVERGENCE", "ENTRY_SHORT_NO_DIVERGENCE",
-)
+RSI_DIVERGENCE_ENTRY_EVENTS = ("ENTRY_LONG_DIVERGENCE", "ENTRY_SHORT_DIVERGENCE")
 
 
 def backtest_rsi_divergence(ticker, window_days, period="730d"):
     """
-    RSI early-cross divergence (1H) - every 40/60-cross entry in the
-    window, tagged Divergence vs No Divergence. Reuses RSI Wave's exact
-    stop/target formula (RSIWaveStatusService._stop_target) - same risk
-    model, just a different, earlier trigger condition being tested.
+    RSI Divergence (1H) - every confirmed regular-divergence entry in
+    the window (see RSIDivergenceStrategy's own docstring for the exact
+    pattern). Reuses RSI Wave's exact stop/target formula
+    (RSIWaveStatusService._stop_target) - same risk model, a different
+    entry condition being tested.
     """
 
     trace, df = RSIDivergenceStrategy.run_symbol(ticker, period=period)
@@ -220,7 +218,6 @@ def backtest_rsi_divergence(ticker, window_days, period="730d"):
             continue
 
         direction = "LONG" if "LONG" in bar["event"] else "SHORT"
-        divergence = "Divergence" if "NO_DIVERGENCE" not in bar["event"] else "No divergence"
         idx = bar["index"]
         price = bar["price"]
 
@@ -235,7 +232,7 @@ def backtest_rsi_divergence(ticker, window_days, period="730d"):
             continue
 
         trades.append({
-            "time": bar["time"], "engine": "RSI Divergence", "type": divergence,
+            "time": bar["time"], "engine": "RSI Divergence", "type": "RSI Divergence",
             "direction": direction, "entry": price, "stop": levels["stop"], "target": levels["target1"],
             **outcome,
         })

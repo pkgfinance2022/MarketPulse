@@ -1,46 +1,50 @@
 """
-RSI early-cross divergence strategy.
+RSI regular-divergence strategy.
 
-A deliberately earlier, riskier sibling of RSIWaveStrategy. That
-strategy waits for RSI to travel all the way from an oversold base to
-a full cross above 65 before calling it an entry - a late, confirmed
-signal. This one asks: what about the moment RSI first crosses back
-above 40, coming out of an oversold base? That's much earlier (and
-more prone to getting rejected back down at 50/60/65 before ever
-reaching a Wave entry), so it's tagged and reported as its own thing,
-not folded into the Wave engine's own states.
+Enters on a classic bullish/bearish "regular" RSI divergence - price
+makes an equal-or-lower low while RSI makes a meaningfully higher low
+(mirrored: equal-or-higher high with a lower high, for shorts) - a
+pattern independently verified against real chart examples (AAPL,
+TSLA, GC=F, BTC-USD all matched the textbook shape exactly: two swing
+points in price and RSI, connected trendlines sloping opposite ways).
 
 The pattern, bar by bar:
-  1. RSI touches oversold (<= OVERSOLD_TOUCH) - this is the base.
-  2. Price/RSI often "fight" below 40 for a while - noisy, indecisive,
-     sometimes carving out a second, shallower low before actually
-     turning up.
-  3. RSI crosses above 40. This is the signal.
+  1. RSI touches oversold (<= OVERSOLD_TOUCH) or overbought
+     (>= OVERBOUGHT_TOUCH) - this is the base, and keeps updating to
+     whatever the deepest point turns out to be.
+  2. RSI bounces away from the base by BOUNCE_MARGIN points - the base
+     is locked in, and a second leg starts.
+  3. The second leg's own lowest/highest point is tracked as it forms.
+  4. Once RSI turns back off that second-leg extreme, check whether it
+     actually diverges from the base (price equal-or-worse, RSI
+     meaningfully better by MIN_DIVERGENCE_MARGIN). If not, there's no
+     valid setup here - keep watching, no entry.
+  5. If it does diverge, wait for RSI to recover CONFIRM_MARGIN points
+     off that second-leg extreme before entering - not the instant it
+     turns (too early, mostly noise: backtested at 22.4% win rate),
+     and not waiting for a much later confirmation like RSI Wave's own
+     65-cross (by then price has already run well past the actual
+     divergence point). This margin is what separates this from an
+     earlier, weaker version that wagered fully on a 40-cross instead -
+     that version showed a flat-to-negative average return; requiring
+     divergence AND a modest recovery off the second leg is what turned
+     it consistently positive across a range of confirmation margins
+     (backtested 1-8 points, positive avg return throughout, peaking
+     near CONFIRM_MARGIN=5).
 
-The interesting part is whether step 2 formed a classic bullish RSI
-divergence on the way there: price makes an equal-or-lower low on its
-second dip while RSI makes a HIGHER low - the textbook "failure swing"
-setup. When that structure is present, the 40-cross is tagged
-DIVERGENCE (higher-confidence read); when RSI just fell straight from
-the oversold touch to the 40-cross with no second, higher low to
-compare against, it's tagged NO_DIVERGENCE (still reported - "it is
-also pass on" - but flagged as the more speculative case).
+Mirrored for downtrends: oversold becomes overbought, "higher low"
+becomes "lower high."
 
-Divergence detection, mechanically: once oversold, the running lowest
-RSI/price point is the "base." If RSI later bounces away from that
-base by BOUNCE_MARGIN points and then turns back down again (a genuine
-second leg, not just noise), the base is locked in as prior_low and a
-new current_low starts tracking the second leg's own bottom. Whichever
-point is lowest when RSI crosses 40 is what gets compared against
-prior_low for the divergence check. If RSI never bounces away from the
-base before crossing 40, there's no second leg to compare - NO_DIVERGENCE.
+Stop/target reuses RSIWaveStatusService._stop_target exactly (same
+risk model RSI Wave already uses) - tested tightening the stop to the
+second-leg swing point directly, which made results worse, so left as
+the existing ATR/support-resistance formula.
 
-Mirrored for downtrends: oversold becomes overbought, 40 becomes 60,
-"higher low" becomes "lower high."
-
-This is a prototype for backtesting the idea, not wired into any live
-screener/Telegram alert yet - see analysis/backtester.py's
-backtest_rsi_divergence for how it's being evaluated.
+Backtested via analysis/backtester.py's backtest_rsi_divergence.
+Result on a 19-symbol, 365-day sample: positive avg return, but 12/19
+symbols individually positive vs 7 negative, and the strongest
+performers had thin per-symbol samples (3-5 trades) - promising, but
+not yet validated enough to wire into any live screener or alert.
 """
 
 import ta
@@ -56,21 +60,22 @@ class RSIDivergenceStrategy:
     OVERSOLD_TOUCH = RSIWaveStrategy.OVERSOLD_TOUCH      # 25 - same base condition as the Wave engine
     OVERBOUGHT_TOUCH = RSIWaveStrategy.OVERBOUGHT_TOUCH  # 75
 
-    CROSS_LONG = 40
-    CROSS_SHORT = 60
-
-    # How far RSI has to bounce away from the current low before a
-    # later pullback counts as a genuine "second leg" (and the bounce
-    # peak locks in prior_low) rather than just noise sitting at the
-    # bottom. Untested magic number - exactly the kind of thing the
-    # backtest below exists to sanity-check.
+    # How far RSI has to bounce away from the base before a later
+    # pullback counts as a genuine "second leg" rather than just noise
+    # sitting at the bottom.
     BOUNCE_MARGIN = 5
 
     # A second-leg low that's only 0.1 RSI points "higher" than the
     # base isn't a real divergence, it's rounding noise - require a
-    # meaningful gap before tagging it as the textbook higher-low/
+    # meaningful gap before calling it the textbook higher-low/
     # lower-high pattern.
     MIN_DIVERGENCE_MARGIN = 3
+
+    # How far RSI has to recover off the second-leg extreme before
+    # entering - backtested sweep of 1-8 points all gave a positive
+    # average return (unlike waiting for a 40/60 cross, which didn't),
+    # peaking around this value.
+    CONFIRM_MARGIN = 5
 
     @staticmethod
     def _prepare(df):
@@ -102,6 +107,7 @@ class RSIDivergenceStrategy:
         base_rsi = base_price = None
         bounced_from_base = False
         second_leg_rsi = second_leg_price = None
+        divergence_locked = False
 
         trace = []
         prev_rsi = float(rsi.iloc[start - 1])
@@ -120,12 +126,14 @@ class RSIDivergenceStrategy:
                     base_rsi, base_price = r, price
                     bounced_from_base = False
                     second_leg_rsi = second_leg_price = None
+                    divergence_locked = False
 
                 elif r >= cls.OVERBOUGHT_TOUCH:
                     phase = "BASE_SHORT"
                     base_rsi, base_price = r, price
                     bounced_from_base = False
                     second_leg_rsi = second_leg_price = None
+                    divergence_locked = False
 
             elif phase == "BASE_LONG":
 
@@ -138,29 +146,25 @@ class RSIDivergenceStrategy:
 
                 elif second_leg_rsi is None or r < second_leg_rsi:
                     second_leg_rsi, second_leg_price = r, price
+                    divergence_locked = second_leg_price <= base_price and second_leg_rsi > base_rsi + cls.MIN_DIVERGENCE_MARGIN
 
-                if r >= cls.CROSS_LONG and prev_rsi < cls.CROSS_LONG:
+                elif divergence_locked and r >= second_leg_rsi + cls.CONFIRM_MARGIN:
 
-                    if bounced_from_base and second_leg_rsi is not None:
-                        divergence = second_leg_price <= base_price and second_leg_rsi > base_rsi + cls.MIN_DIVERGENCE_MARGIN
-                        event = "ENTRY_LONG_DIVERGENCE" if divergence else "ENTRY_LONG_NO_DIVERGENCE"
-                    else:
-                        event = "ENTRY_LONG_NO_DIVERGENCE"
-
+                    event = "ENTRY_LONG_DIVERGENCE"
                     divergence_points = {
                         "base_rsi": base_rsi, "base_price": base_price,
                         "second_leg_rsi": second_leg_rsi, "second_leg_price": second_leg_price,
                     }
-
                     phase = "WATCHING"
 
-                elif r >= cls.OVERBOUGHT_TOUCH:
+                if phase == "BASE_LONG" and r >= cls.OVERBOUGHT_TOUCH:
                     # Whipsawed straight to the other extreme without
-                    # ever crossing 40 - start a fresh short-side base.
+                    # ever confirming - start a fresh short-side base.
                     phase = "BASE_SHORT"
                     base_rsi, base_price = r, price
                     bounced_from_base = False
                     second_leg_rsi = second_leg_price = None
+                    divergence_locked = False
 
             elif phase == "BASE_SHORT":
 
@@ -173,29 +177,25 @@ class RSIDivergenceStrategy:
 
                 elif second_leg_rsi is None or r > second_leg_rsi:
                     second_leg_rsi, second_leg_price = r, price
+                    divergence_locked = second_leg_price >= base_price and second_leg_rsi < base_rsi - cls.MIN_DIVERGENCE_MARGIN
 
-                if r <= cls.CROSS_SHORT and prev_rsi > cls.CROSS_SHORT:
+                elif divergence_locked and r <= second_leg_rsi - cls.CONFIRM_MARGIN:
 
-                    if bounced_from_base and second_leg_rsi is not None:
-                        divergence = second_leg_price >= base_price and second_leg_rsi < base_rsi - cls.MIN_DIVERGENCE_MARGIN
-                        event = "ENTRY_SHORT_DIVERGENCE" if divergence else "ENTRY_SHORT_NO_DIVERGENCE"
-                    else:
-                        event = "ENTRY_SHORT_NO_DIVERGENCE"
-
+                    event = "ENTRY_SHORT_DIVERGENCE"
                     divergence_points = {
                         "base_rsi": base_rsi, "base_price": base_price,
                         "second_leg_rsi": second_leg_rsi, "second_leg_price": second_leg_price,
                     }
-
                     phase = "WATCHING"
 
-                elif r <= cls.OVERSOLD_TOUCH:
+                if phase == "BASE_SHORT" and r <= cls.OVERSOLD_TOUCH:
                     # Whipsawed straight to the other extreme without
-                    # ever crossing 60 - start a fresh long-side base.
+                    # ever confirming - start a fresh long-side base.
                     phase = "BASE_LONG"
                     base_rsi, base_price = r, price
                     bounced_from_base = False
                     second_leg_rsi = second_leg_price = None
+                    divergence_locked = False
 
             trace.append({
                 "index": i,
