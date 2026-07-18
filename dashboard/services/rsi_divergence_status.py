@@ -1,0 +1,155 @@
+"""
+RSI Divergence status service.
+
+Mirrors dashboard/services/rsi_wave_status.py exactly, wired to
+RSIDivergenceStrategy instead - turns its bar-by-bar trace into (a) a
+live per-ticker status + SL/target box, and (b) a whole-universe
+screener label, both sharing the same fetch+walk so the screener and
+the notification-check fragment can never disagree about what's
+happening for a given symbol.
+"""
+
+from concurrent.futures import ThreadPoolExecutor
+
+import ta
+
+from analysis.rsi_divergence_strategy import RSIDivergenceStrategy
+
+ACTIONABLE_STATES = {
+    "ENTRY_LONG_DIVERGENCE": "LONG",
+    "ENTRY_SHORT_DIVERGENCE": "SHORT",
+}
+
+SCREEN_WORKERS = 3   # kept low - Streamlit Community Cloud's free-tier container has a much lower OS thread limit than local dev; a higher count caused "can't start new thread" crashes in production
+
+
+class RSIDivergenceStatusService:
+
+    ATR_WINDOW = 14
+    SUPPORT_RESISTANCE_WINDOW = 20
+
+    @classmethod
+    def analyse(cls, symbol, period="730d"):
+
+        trace, df = RSIDivergenceStrategy.run_symbol(symbol, period=period)
+
+        if trace is None:
+            return None
+
+        description, state, event_time = RSIDivergenceStrategy.describe(trace)
+        last = trace[-1]
+
+        direction = ACTIONABLE_STATES.get(state)
+
+        stop_target = None
+
+        if direction:
+
+            close, high, low = df["Close"], df["High"], df["Low"]
+
+            atr = ta.volatility.average_true_range(high, low, close, window=cls.ATR_WINDOW)
+            support = low.rolling(cls.SUPPORT_RESISTANCE_WINDOW).min()
+            resistance = high.rolling(cls.SUPPORT_RESISTANCE_WINDOW).max()
+
+            stop_target = cls._stop_target(
+                direction,
+                last["price"],
+                float(support.iloc[-1]),
+                float(resistance.iloc[-1]),
+                float(atr.iloc[-1]) if not (atr.empty or atr.isna().iloc[-1]) else 0.0,
+            )
+
+        return {
+            "symbol": symbol,
+            "df": df,
+            "trace": trace,
+            "state": state,
+            "description": description,
+            "price": last["price"],
+            "rsi": round(last["rsi"], 2),
+            "direction": direction,
+            "stop_target": stop_target,
+            "event_time": event_time,
+        }
+
+    @staticmethod
+    def _stop_target(direction, price, support, resistance, atr):
+        """Identical formula to RSIWaveStatusService._stop_target - same
+        risk model, kept duplicated rather than imported so this engine
+        stays fully independent (matches DailyReversalStatusService's
+        own reasoning for not sharing code across engines)."""
+
+        if direction == "LONG":
+
+            stop = max(support, price - 2 * atr) if atr else support
+            stop = min(stop, price - 0.0001)
+
+            risk = max(price - stop, 0.01)
+            target1 = resistance if resistance > price else price + risk * 2
+            target2 = price + risk * 3
+
+        else:  # SHORT
+
+            stop = min(resistance, price + 2 * atr) if atr else resistance
+            stop = max(stop, price + 0.0001)
+
+            risk = max(stop - price, 0.01)
+            target1 = support if support < price else price - risk * 2
+            target2 = price - risk * 3
+
+        risk_reward = round(abs(target1 - price) / risk, 2) if risk else 0.0
+
+        return {
+            "stop": round(stop, 2),
+            "target1": round(target1, 2),
+            "target2": round(target2, 2),
+            "risk": round(risk, 2),
+            "risk_reward": risk_reward,
+        }
+
+    @classmethod
+    def _screen_one(cls, symbol, period):
+
+        try:
+            trace, _ = RSIDivergenceStrategy.run_symbol(symbol, period=period)
+
+            if trace:
+                description, state, event_time = RSIDivergenceStrategy.describe(trace)
+                last = trace[-1]
+                return symbol, {
+                    "state": state,
+                    "description": description,
+                    "price": last["price"],
+                    "rsi": round(last["rsi"], 2),
+                    "event_time": event_time,
+                }
+
+            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None, "event_time": None}
+
+        except Exception:
+            return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None, "event_time": None}
+
+    @classmethod
+    def screen_states(cls, symbols, period="730d"):
+
+        states = {}
+
+        with ThreadPoolExecutor(max_workers=SCREEN_WORKERS) as executor:
+
+            futures = [executor.submit(cls._screen_one, symbol, period) for symbol in symbols]
+
+            for future in futures:
+                symbol, info = future.result()
+                states[symbol] = info
+
+        return states
+
+    @classmethod
+    def screen(cls, symbols, period="730d"):
+
+        states = cls.screen_states(symbols, period=period)
+
+        return {
+            symbol: RSIDivergenceStrategy.STATE_LABELS.get(info["state"], "⚪ Watching")
+            for symbol, info in states.items()
+        }

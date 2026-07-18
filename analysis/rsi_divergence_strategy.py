@@ -205,6 +205,7 @@ class RSIDivergenceStrategy:
                 "price": price,
                 "time": time_index[i],
                 "divergence_points": divergence_points,
+                "divergence_locked": divergence_locked,
             })
 
             prev_rsi = r
@@ -223,3 +224,63 @@ class RSIDivergenceStrategy:
         trace = cls.walk(ind, cls.MIN_HISTORY, len(df))
 
         return trace, df
+
+    @classmethod
+    def describe(cls, trace):
+        """
+        Plain-English read of the CURRENT state, for a live screener/
+        status box - mirrors RSIWaveStrategy.describe()'s own pattern.
+        "Div1"/"Div2" (bullish/bearish) rather than "Path D" - Reversal
+        Playbook already has an unrelated Path D, and these are a
+        different engine entirely.
+        """
+
+        if not trace:
+            return "Not enough 1H history to evaluate this instrument yet.", "NONE", None
+
+        last = trace[-1]
+        phase = last["phase"]
+        rsi = round(last["rsi"], 2)
+
+        last_event_bar = next((bar for bar in reversed(trace) if bar["event"]), None)
+        bars_since_event = len(trace) - 1 - trace.index(last_event_bar) if last_event_bar else None
+        recent = bars_since_event is not None and bars_since_event <= 3
+
+        if recent and last_event_bar["event"] == "ENTRY_LONG_DIVERGENCE":
+            return (
+                f"🟢 Div1 (bullish) entry {bars_since_event} bar(s) ago — RSI divergence confirmed, RSI {rsi}.",
+                "ENTRY_LONG_DIVERGENCE",
+                last_event_bar["time"],
+            )
+
+        if recent and last_event_bar["event"] == "ENTRY_SHORT_DIVERGENCE":
+            return (
+                f"🔴 Div2 (bearish) entry {bars_since_event} bar(s) ago — RSI divergence confirmed, RSI {rsi}.",
+                "ENTRY_SHORT_DIVERGENCE",
+                last_event_bar["time"],
+            )
+
+        if phase == "BASE_LONG" and last["divergence_locked"]:
+            return (
+                f"🟡 Div1 forming (bullish) — RSI divergence detected, RSI {rsi}, watching for confirmation.",
+                "DIVERGENCE_FORMING_LONG",
+                None,
+            )
+
+        if phase == "BASE_SHORT" and last["divergence_locked"]:
+            return (
+                f"🟠 Div2 forming (bearish) — RSI divergence detected, RSI {rsi}, watching for confirmation.",
+                "DIVERGENCE_FORMING_SHORT",
+                None,
+            )
+
+        return f"⚪ Watching — RSI {rsi}, no divergence setup active.", "WATCHING", None
+
+    STATE_LABELS = {
+        "NONE": "⚪ No data",
+        "WATCHING": "⚪ Watching",
+        "DIVERGENCE_FORMING_LONG": "🟡 Div1 forming (bullish)",
+        "DIVERGENCE_FORMING_SHORT": "🟠 Div2 forming (bearish)",
+        "ENTRY_LONG_DIVERGENCE": "🟢 Div1 (bullish) entry",
+        "ENTRY_SHORT_DIVERGENCE": "🔴 Div2 (bearish) entry",
+    }

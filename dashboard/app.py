@@ -24,6 +24,7 @@ from analysis import fifteen_min_readiness
 from analysis.backtester import backtest_daily, backtest_reversal_playbook, backtest_rsi_divergence, backtest_rsi_wave, backtest_weekly, summarize_trades
 from analysis.reversal_playbook import ReversalPlaybook
 from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
+from analysis.rsi_divergence_strategy import RSIDivergenceStrategy
 from analysis.rsi_wave_strategy import RSIWaveStrategy
 from core.loader import AssetLoader
 from dashboard.services.alert_log import AlertLog
@@ -33,6 +34,7 @@ from dashboard.services.ticker_aliases import resolve_ticker
 from dashboard.services import trusted_ips
 from dashboard.services.reversal_status import ReversalStatusService
 from dashboard.services.reversal_status_daily import DailyReversalStatusService
+from dashboard.services.rsi_divergence_status import RSIDivergenceStatusService
 from dashboard.services.rsi_wave_status import RSIWaveStatusService
 from dashboard.services.stock_news_service import StockNewsService
 from dashboard.services.telegram_notifier import TelegramNotifier
@@ -107,13 +109,14 @@ def _scan_eta_text(cache_entry):
 _format_event_time = time_utils.format_event_time
 
 
-NOTIFY_BASELINE_KEYS = ["wave_states", "wave_states_seeded", "reversal_states", "reversal_states_seeded"]
+NOTIFY_BASELINE_KEYS = ["wave_states", "wave_states_seeded", "reversal_states", "reversal_states_seeded", "divergence_states", "divergence_states_seeded"]
 
 for _prefix, _country, _title in [("us", None, None), ("india", None, None), ("crypto", None, None)]:
     NOTIFY_BASELINE_KEYS += [
         f"{_prefix}_wave_states", f"{_prefix}_wave_states_seeded",
         f"{_prefix}_reversal_states", f"{_prefix}_reversal_states_seeded",
         f"{_prefix}_daily_reversal_states", f"{_prefix}_daily_reversal_states_seeded",
+        f"{_prefix}_divergence_states", f"{_prefix}_divergence_states_seeded",
     ]
 
 
@@ -140,6 +143,8 @@ def init_state():
         "wave_states_seeded": persisted.get("wave_states_seeded", False),
         "reversal_states": persisted.get("reversal_states", {}),
         "reversal_states_seeded": persisted.get("reversal_states_seeded", False),
+        "divergence_states": persisted.get("divergence_states", {}),
+        "divergence_states_seeded": persisted.get("divergence_states_seeded", False),
         "fundamental_scan_result": None,
     }
 
@@ -152,6 +157,8 @@ def init_state():
         defaults[f"{prefix}_reversal_states_seeded"] = persisted.get(f"{prefix}_reversal_states_seeded", False)
         defaults[f"{prefix}_daily_reversal_states"] = persisted.get(f"{prefix}_daily_reversal_states", {})
         defaults[f"{prefix}_daily_reversal_states_seeded"] = persisted.get(f"{prefix}_daily_reversal_states_seeded", False)
+        defaults[f"{prefix}_divergence_states"] = persisted.get(f"{prefix}_divergence_states", {})
+        defaults[f"{prefix}_divergence_states_seeded"] = persisted.get(f"{prefix}_divergence_states_seeded", False)
         defaults[f"{prefix}_last_loaded_ts"] = 0
         defaults[f"{prefix}_seen_cache_ts"] = 0
 
@@ -368,6 +375,20 @@ REVERSAL_SIGNAL_LABELS = {
     "SELL_SIGNAL_CONTINUATION": "SELL (continuation)",
 }
 
+# RSI Divergence (analysis/rsi_divergence_strategy.py) - Global Indices
+# + US Stocks only (explicit scope request), not Indian Stocks/Crypto.
+# "Div1"/"Div2" rather than "Path D" - Reversal Playbook already has an
+# unrelated Path D.
+DIVERGENCE_SIGNAL_DIRECTIONS = {
+    "ENTRY_LONG_DIVERGENCE": "LONG",
+    "ENTRY_SHORT_DIVERGENCE": "SHORT",
+}
+
+DIVERGENCE_SIGNAL_LABELS = {
+    "ENTRY_LONG_DIVERGENCE": "Div1 (bullish divergence)",
+    "ENTRY_SHORT_DIVERGENCE": "Div2 (bearish divergence)",
+}
+
 # Weekly confluence (analysis/reversal_playbook_daily.py) is
 # bullish-breakout-only - no SELL side - so every actionable state here
 # is a LONG. PATH_C_FORMING is deliberately excluded, same as the Daily/
@@ -470,6 +491,107 @@ def check_for_new_reversal_signals():
             stop_target,
             source="Global Indices",
             signal_type="Reversal 1H",
+        )
+
+        browser_entries.append(
+            {
+                "ticker": signal["ticker"],
+                "name": signal["name"],
+                "direction": signal["direction"],
+                "price": signal["price"],
+                "rsi": signal["rsi"],
+                "stop_target": stop_target,
+            }
+        )
+
+    render_notification_trigger(browser_entries)
+
+
+@st.fragment(run_every=300)
+def check_for_new_divergence_signals():
+    """
+    Same pattern as check_for_new_reversal_signals(), for RSI
+    Divergence instead - Global Indices only here (US Stocks' own
+    divergence notify lives inside _notify_universe_changes since that
+    tab isn't on this same auto-refreshing fragment cadence).
+    """
+
+    market = st.session_state.global_market
+
+    if market is None:
+        return
+
+    tickers = market["df"]["Ticker"].tolist()
+    name_map = dict(zip(market["df"]["Ticker"], market["df"]["Name"]))
+
+    current_states = RSIDivergenceStatusService.screen_states(tickers)
+    previous_states = st.session_state.divergence_states
+    is_first_check = not st.session_state.divergence_states_seeded
+
+    new_signals = (
+        []
+        if is_first_check
+        else [
+            {
+                "ticker": ticker,
+                "name": name_map.get(ticker, ticker),
+                "direction": DIVERGENCE_SIGNAL_DIRECTIONS[info["state"]],
+                "state": info["state"],
+                "price": info["price"],
+                "rsi": info["rsi"],
+            }
+            for ticker, info in current_states.items()
+            if info["state"] in DIVERGENCE_SIGNAL_DIRECTIONS
+            and (previous_states.get(ticker) or {}).get("state") != info["state"]
+        ]
+    )
+
+    st.session_state.divergence_states = current_states
+    st.session_state.divergence_states_seeded = True
+    _persist_notify_baseline()
+
+    browser_entries = []
+
+    for signal in new_signals:
+
+        # Cross-session, cross-restart dedup - see check_for_new_entries().
+        if AlertLog.recently_logged(signal["ticker"], signal["direction"]):
+            continue
+
+        icon = "🟢" if signal["direction"] == "LONG" else "🔴"
+        price = round(signal["price"], 2) if signal["price"] is not None else "?"
+        signal_label = DIVERGENCE_SIGNAL_LABELS.get(signal["state"], signal["state"])
+        event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
+
+        full_status = RSIDivergenceStatusService.analyse(signal["ticker"])
+        stop_target = full_status["stop_target"] if full_status else None
+
+        levels = (
+            f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
+            if stop_target and stop_target.get("stop") is not None
+            else ""
+        )
+
+        description = full_status["description"] if full_status else ""
+        message = (
+            f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (RSI Divergence)\n"
+            f"{event_time}\nPrice {price} · RSI {signal['rsi']}{levels}\n{description}"
+        )
+
+        st.toast(f"{signal_label}: {signal['name']}", icon=icon)
+
+        if TelegramNotifier.is_configured():
+            TelegramNotifier.send(message)
+
+        AlertLog.log_alert(
+            signal["ticker"],
+            signal["name"],
+            signal["direction"],
+            signal["price"],
+            signal["rsi"],
+            stop_target,
+            source="Global Indices",
+            signal_type="RSI Divergence",
         )
 
         browser_entries.append(
@@ -598,6 +720,20 @@ def _scan_global_indices_data(sector):
         df["Weekly Full"] = df["Ticker"].map({t: info["weekly_description"] for t, info in daily_reversal_states.items()}).fillna("")
         df["Weekly Timestamp"] = df["Ticker"].map({t: _format_event_time(info["weekly_event_time"]) for t, info in daily_reversal_states.items()}).fillna("—")
 
+        # RSI Divergence (1H) - a separate, deliberately narrower engine
+        # from Setup/Reversal above (see analysis/rsi_divergence_strategy.py).
+        # Global Indices only by design - explicitly not extended to
+        # Indian Stocks/Crypto (see _scan_universe_data for the US-only
+        # equivalent on that side).
+        divergence_states = RSIDivergenceStatusService.screen_states(tickers)
+        divergence_labels = {t: RSIDivergenceStrategy.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in divergence_states.items()}
+        df["RSI Divergence"] = df["Ticker"].map(divergence_labels).fillna("⚪ Watching")
+        df["RSI Divergence Full"] = df["Ticker"].map({t: info["description"] for t, info in divergence_states.items()}).fillna("")
+        df["RSI Divergence Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in divergence_states.items()}).fillna("—")
+
+    else:
+        divergence_states = {}
+
     return {
         "df": df,
         "success": success,
@@ -605,6 +741,7 @@ def _scan_global_indices_data(sector):
         "sector": sector,
         "wave_states": wave_states,
         "reversal_states": reversal_states,
+        "divergence_states": divergence_states,
     }
 
 
@@ -1570,6 +1707,7 @@ def render_global_indices_tab(meta):
     render_global_indices_live()
     check_for_new_entries()
     check_for_new_reversal_signals()
+    check_for_new_divergence_signals()
 
     st.divider()
     render_parked_trades()
@@ -1598,6 +1736,8 @@ def _ensure_universe_state(prefix):
         f"{prefix}_reversal_states_seeded": False,
         f"{prefix}_daily_reversal_states": {},
         f"{prefix}_daily_reversal_states_seeded": False,
+        f"{prefix}_divergence_states": {},
+        f"{prefix}_divergence_states_seeded": False,
         f"{prefix}_last_loaded_ts": 0,
         f"{prefix}_seen_cache_ts": 0,
     }
@@ -1630,6 +1770,7 @@ def _scan_universe_data(country):
     wave_states = {}
     reversal_states = {}
     daily_reversal_states = {}
+    divergence_states = {}
 
     if not df.empty:
 
@@ -1663,6 +1804,18 @@ def _scan_universe_data(country):
         df["Weekly Full"] = df["Ticker"].map({t: info["weekly_description"] for t, info in daily_reversal_states.items()}).fillna("")
         df["Weekly Timestamp"] = df["Ticker"].map({t: _format_event_time(info["weekly_event_time"]) for t, info in daily_reversal_states.items()}).fillna("—")
 
+        # RSI Divergence (1H) - US Stocks only, deliberately not
+        # extended to Indian Stocks or Crypto (explicit scope request -
+        # see analysis/rsi_divergence_strategy.py). Hourly on a
+        # normally-Daily-only universe is a deliberate exception - see
+        # the Command Center column filter for the matching carve-out.
+        if country == "USA":
+            divergence_states = RSIDivergenceStatusService.screen_states(tickers)
+            divergence_labels = {t: RSIDivergenceStrategy.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in divergence_states.items()}
+            df["RSI Divergence"] = df["Ticker"].map(divergence_labels).fillna("⚪ Watching")
+            df["RSI Divergence Full"] = df["Ticker"].map({t: info["description"] for t, info in divergence_states.items()}).fillna("")
+            df["RSI Divergence Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in divergence_states.items()}).fillna("—")
+
     return {
         "df": df,
         "success": success,
@@ -1670,10 +1823,11 @@ def _scan_universe_data(country):
         "wave_states": wave_states,
         "reversal_states": reversal_states,
         "daily_reversal_states": daily_reversal_states,
+        "divergence_states": divergence_states,
     }
 
 
-def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, daily_reversal_states):
+def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, daily_reversal_states, divergence_states):
     """
     Same new-entry / new-signal diffing as check_for_new_entries() /
     check_for_new_reversal_signals(), generalized across the three
@@ -1905,6 +2059,64 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
             source=PREFIX_SOURCE_LABELS[prefix], signal_type="Weekly Confluence",
         )
 
+    if prefix == "us":
+
+        previous_divergence = st.session_state[f"{prefix}_divergence_states"]
+        is_first_divergence_check = not st.session_state[f"{prefix}_divergence_states_seeded"]
+
+        new_divergence_signals = (
+            []
+            if is_first_divergence_check
+            else [
+                {
+                    "ticker": ticker,
+                    "name": name_map.get(ticker, ticker),
+                    "direction": DIVERGENCE_SIGNAL_DIRECTIONS[info["state"]],
+                    "state": info["state"],
+                    "price": info["price"],
+                    "rsi": info["rsi"],
+                }
+                for ticker, info in divergence_states.items()
+                if info["state"] in DIVERGENCE_SIGNAL_DIRECTIONS
+                and (previous_divergence.get(ticker) or {}).get("state") != info["state"]
+            ]
+        )
+
+        for signal in new_divergence_signals:
+
+            # Cross-session, cross-restart dedup - see check_for_new_entries().
+            if AlertLog.recently_logged(signal["ticker"], signal["direction"]):
+                continue
+
+            icon = "🟢" if signal["direction"] == "LONG" else "🔴"
+            signal_label = DIVERGENCE_SIGNAL_LABELS.get(signal["state"], signal["state"])
+            price = round(signal["price"], 2) if signal["price"] is not None else "?"
+            rsi = signal["rsi"] if signal["rsi"] is not None else "?"
+            event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
+
+            full_status = RSIDivergenceStatusService.analyse(signal["ticker"])
+            stop_target = full_status["stop_target"] if full_status else None
+
+            levels = (
+                f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
+                if stop_target and stop_target.get("stop") is not None
+                else ""
+            )
+
+            st.toast(f"{signal_label}: {signal['name']}", icon=icon)
+
+            if TelegramNotifier.is_configured():
+                description = full_status["description"] if full_status else ""
+                TelegramNotifier.send(
+                    f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (RSI Divergence)\n"
+                    f"{event_time}\nPrice {price} · RSI {rsi}{levels}\n{description}"
+                )
+
+            AlertLog.log_alert(
+                signal["ticker"], signal["name"], signal["direction"], signal["price"], signal["rsi"], stop_target,
+                source="US Stocks", signal_type="RSI Divergence",
+            )
+
 
 UNIVERSE_POLL_SECONDS = 20   # how often the page checks whether a background scan finished - cheap (just a dict read, no network), so this can be much shorter than the hourly rescan cadence itself
 
@@ -1952,7 +2164,7 @@ def _refresh_universe_body(prefix, country):
         result_df = result["df"]
         name_map = dict(zip(result_df["Ticker"], result_df["Name"])) if not result_df.empty else {}
 
-        _notify_universe_changes(prefix, name_map, result["wave_states"], result["reversal_states"], result["daily_reversal_states"])
+        _notify_universe_changes(prefix, name_map, result["wave_states"], result["reversal_states"], result["daily_reversal_states"], result["divergence_states"])
 
         st.session_state[f"{prefix}_market"] = {"df": result_df, "success": result["success"], "failed": result["failed"]}
 
@@ -1965,6 +2177,8 @@ def _refresh_universe_body(prefix, country):
         st.session_state[f"{prefix}_reversal_states_seeded"] = True
         st.session_state[f"{prefix}_daily_reversal_states"] = result["daily_reversal_states"]
         st.session_state[f"{prefix}_daily_reversal_states_seeded"] = True
+        st.session_state[f"{prefix}_divergence_states"] = result["divergence_states"]
+        st.session_state[f"{prefix}_divergence_states_seeded"] = True
         st.session_state[f"{prefix}_last_loaded_ts"] = cache_entry["ts"]
         st.session_state[seen_ts_key] = cache_entry["ts"]
         _persist_notify_baseline()
@@ -2294,7 +2508,16 @@ COMMAND_CENTER_COLUMNS = [
     ("Setup", "Setup Full", "Setup Timestamp", "Hourly", ("entry",)),
     ("Reversal", "Reversal Full", "Reversal Timestamp", "Hourly", ("signal", "trigger", "continuation")),
     ("Daily Reversal", "Daily Reversal Full", "Daily Reversal Timestamp", "Daily", ("signal", "trigger", "continuation")),
+    ("RSI Divergence", "RSI Divergence Full", "RSI Divergence Timestamp", "Hourly", ("entry",)),
 ]
+
+# RSI Divergence is Hourly on purpose for US Stocks too (unlike Setup/
+# Reversal, which US/India skip entirely, see COMMAND_CENTER_HOURLY_SOURCES
+# below) - it's a deliberate scope exception (Global Indices + US Stocks
+# only, explicitly not Indian Stocks or Crypto). Indian Stocks/Crypto
+# never get the column computed at all (see _scan_universe_data), so
+# they're excluded naturally without needing a special case here.
+COMMAND_CENTER_HOURLY_EXCEPTIONS = {"RSI Divergence"}
 
 # US/India aren't traded intraday (see render_universe_live's
 # show_hourly gate) - their dataframes still carry Setup/Reversal
@@ -2555,8 +2778,12 @@ def _render_command_center_signals():
             # US/India don't get an Hourly view anywhere else in the
             # app (not traded intraday) - skip their Hourly-sourced
             # rows here too, even though the underlying columns still
-            # exist in their scanned dataframe.
-            if base_timeframe == "Hourly" and session_key in ("us_market", "india_market"):
+            # exist in their scanned dataframe. RSI Divergence is a
+            # deliberate exception for US Stocks (see
+            # COMMAND_CENTER_HOURLY_EXCEPTIONS) - Indian Stocks never
+            # has this column computed at all, so it's excluded
+            # naturally regardless of this check.
+            if base_timeframe == "Hourly" and session_key in ("us_market", "india_market") and column not in COMMAND_CENTER_HOURLY_EXCEPTIONS:
                 continue
 
             mask = df[column].astype(str).str.lower().str.contains("|".join(keywords))
