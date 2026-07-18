@@ -37,6 +37,8 @@ COLUMNS = [
     "ClosedPrice",
     "ClosedAt",
     "ReturnPct",
+    "Source",
+    "SignalType",
 ]
 
 
@@ -55,7 +57,16 @@ class AlertLog:
 
         cls._ensure()
 
-        return pd.read_csv(LOG_PATH)
+        df = pd.read_csv(LOG_PATH)
+
+        # Source/SignalType were added after this log already had real
+        # rows in production - backfill so older CSVs (missing these
+        # columns entirely) don't break anything reading them.
+        for col in ("Source", "SignalType"):
+            if col not in df.columns:
+                df[col] = "Unknown"
+
+        return df
 
     @classmethod
     def recently_logged(cls, ticker, direction, within_minutes=60):
@@ -91,7 +102,7 @@ class AlertLog:
         return (now_cet().replace(tzinfo=None) - last_logged).total_seconds() < within_minutes * 60
 
     @classmethod
-    def log_alert(cls, ticker, name, direction, entry_price, rsi, stop_target):
+    def log_alert(cls, ticker, name, direction, entry_price, rsi, stop_target, source="Unknown", signal_type="Unknown"):
 
         cls._ensure()
 
@@ -112,6 +123,8 @@ class AlertLog:
             "ClosedPrice": None,
             "ClosedAt": None,
             "ReturnPct": None,
+            "Source": source,
+            "SignalType": signal_type,
         }
 
         df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)

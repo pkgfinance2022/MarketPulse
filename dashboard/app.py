@@ -347,6 +347,8 @@ def check_for_new_entries():
             entry["price"],
             entry["rsi"],
             stop_target,
+            source="Global Indices",
+            signal_type="RSI Wave",
         )
 
     render_notification_trigger(new_entries)
@@ -375,6 +377,8 @@ WEEKLY_SIGNAL_LABELS = {
     "MULTI_TRY_BREAKOUT": "Multi-try breakout",
     "PATH_C_CONFIRMED": "Path C confirmed",
 }
+
+PREFIX_SOURCE_LABELS = {"us": "US Stocks", "india": "Indian Stocks", "crypto": "Crypto"}
 
 # Crypto notifications are noisy across ~250 symbols of wildly varying
 # quality/liquidity - only Bitcoin is worth an alert.
@@ -464,6 +468,8 @@ def check_for_new_reversal_signals():
             signal["price"],
             signal["rsi"],
             stop_target,
+            source="Global Indices",
+            signal_type="Reversal 1H",
         )
 
         browser_entries.append(
@@ -1145,6 +1151,40 @@ def render_notifications_tab():
     render_alert_tracking()
 
 
+def _render_alert_stats_and_table(df, key_prefix):
+    """
+    Shared by render_alert_tracking() (all-time) and
+    render_weekly_report_tab() (last 7 days) - takes an already-filtered
+    log and renders the same metrics + table for it, so both views stay
+    visually consistent and a future tweak only has to happen once.
+    """
+
+    if df.empty:
+        st.caption("No alerts in this range.")
+        return
+
+    stats = AlertLog.summary(df)
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Total alerts", stats["total"])
+    c2.metric("Still open", stats["open"])
+    c3.metric("Hit target", stats["hit_target"])
+    c4.metric("Hit stop", stats["hit_stop"])
+    c5.metric("Win rate (closed)", f"{stats['win_rate']}%")
+
+    display_cols = [
+        "Timestamp", "Source", "SignalType", "Ticker", "Name", "Direction", "EntryPrice",
+        "Stop", "Target1", "Status", "ReturnPct", "ClosedAt",
+    ]
+
+    st.dataframe(
+        df[display_cols].sort_values("Timestamp", ascending=False),
+        use_container_width=True,
+        hide_index=True,
+        key=f"{key_prefix}_alert_table",
+    )
+
+
 def render_alert_tracking():
     """
     Every alert the system has actually sent, auto-logged (see
@@ -1162,29 +1202,131 @@ def render_alert_tracking():
 
     df = AlertLog.load()
 
-    if df.empty:
-        st.caption("No alerts sent yet.")
+    _render_alert_stats_and_table(df, key_prefix="alltime")
+
+
+def _alert_breakdown(df, group_col):
+    """
+    Per-group (Source or SignalType) alert counts + win rate, so it's
+    obvious at a glance which source/signal type actually did the work
+    this week, not just the totals.
+    """
+
+    rows = []
+
+    for group_value, group_df in df.groupby(group_col):
+
+        stats = AlertLog.summary(group_df)
+
+        rows.append({
+            group_col: group_value,
+            "Alerts": stats["total"],
+            "Hit Target": stats["hit_target"],
+            "Hit Stop": stats["hit_stop"],
+            "Still Open": stats["open"],
+            "Win Rate %": stats["win_rate"],
+        })
+
+    return pd.DataFrame(rows).sort_values("Alerts", ascending=False)
+
+
+def render_weekly_report_tab():
+    """
+    A week-scoped digest of AlertLog, separate from the all-time
+    "Alert Tracking" table in Notifications - answers "what happened
+    this week" directly instead of making you scroll/filter the
+    all-time log yourself: what fired, grouped by source/signal type,
+    what actually worked out vs didn't, the single best/worst mover,
+    which day was busiest, and how this week's win rate stacks up
+    against the all-time average for context.
+    """
+
+    st.subheader("🗓 Weekly Report")
+
+    full_df = AlertLog.load()
+
+    if full_df.empty:
+        st.caption("No alerts logged yet - check back once some have fired.")
         return
 
-    stats = AlertLog.summary(df)
+    full_df["Timestamp"] = pd.to_datetime(full_df["Timestamp"])
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Total alerts", stats["total"])
-    c2.metric("Still open", stats["open"])
-    c3.metric("Hit target", stats["hit_target"])
-    c4.metric("Hit stop", stats["hit_stop"])
-    c5.metric("Win rate (closed)", f"{stats['win_rate']}%")
-
-    display_cols = [
-        "Timestamp", "Ticker", "Name", "Direction", "EntryPrice",
-        "Stop", "Target1", "Status", "ReturnPct", "ClosedAt",
-    ]
-
-    st.dataframe(
-        df[display_cols].sort_values("Timestamp", ascending=False),
-        use_container_width=True,
-        hide_index=True,
+    week_start = time_utils.now_cet().replace(tzinfo=None) - timedelta(days=7)
+    st.caption(
+        f"{week_start.strftime('%b %d')} – {time_utils.now_cet().strftime('%b %d, %Y')} "
+        "· every alert this app actually sent in the last 7 days, and how it played out."
     )
+
+    if st.button("🔄 Check alert outcomes", key="refresh_alert_log_weekly"):
+        with st.spinner("Checking current prices against each alert's stop/target..."):
+            AlertLog.evaluate()
+        full_df = AlertLog.load()
+        full_df["Timestamp"] = pd.to_datetime(full_df["Timestamp"])
+
+    week_df = full_df[full_df["Timestamp"] >= week_start]
+
+    if week_df.empty:
+        st.info("Nothing fired in the last 7 days.")
+        return
+
+    _render_alert_stats_and_table(week_df, key_prefix="weekly")
+
+    # This week's win rate vs all-time - context for whether this was a
+    # typical week or an outlier, not just a number in isolation.
+    week_stats = AlertLog.summary(week_df)
+    all_time_stats = AlertLog.summary(full_df)
+
+    if week_stats["hit_target"] + week_stats["hit_stop"] > 0:
+        delta = round(week_stats["win_rate"] - all_time_stats["win_rate"], 1)
+        st.caption(
+            f"This week's win rate ({week_stats['win_rate']}%) vs all-time ({all_time_stats['win_rate']}%): "
+            f"{'+' if delta >= 0 else ''}{delta} points."
+        )
+
+    st.divider()
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**By source**")
+        st.dataframe(_alert_breakdown(week_df, "Source"), use_container_width=True, hide_index=True)
+
+    with col2:
+        st.markdown("**By signal type**")
+        st.dataframe(_alert_breakdown(week_df, "SignalType"), use_container_width=True, hide_index=True)
+
+    st.markdown("**By day**")
+    by_day = week_df.copy()
+    by_day["Day"] = by_day["Timestamp"].dt.strftime("%a %b %d")
+    day_counts = by_day.groupby("Day").size().reindex(
+        [d for d in by_day.sort_values("Timestamp")["Day"].unique()]
+    )
+    st.bar_chart(day_counts)
+
+    closed = week_df[week_df["Status"] != "OPEN"].copy()
+    closed["ReturnPct"] = pd.to_numeric(closed["ReturnPct"], errors="coerce")
+    closed = closed.dropna(subset=["ReturnPct"])
+
+    if not closed.empty:
+
+        best = closed.loc[closed["ReturnPct"].idxmax()]
+        worst = closed.loc[closed["ReturnPct"].idxmin()]
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.success(
+                f"🏆 Best this week: {best['Name']} ({best['Ticker']}) — {best['Direction']}, "
+                f"{best['ReturnPct']:+.2f}% ({best['Status']})"
+            )
+
+        with col2:
+            st.error(
+                f"🔻 Worst this week: {worst['Name']} ({worst['Ticker']}) — {worst['Direction']}, "
+                f"{worst['ReturnPct']:+.2f}% ({worst['Status']})"
+            )
+    else:
+        st.caption("Nothing closed yet this week to rank a best/worst mover.")
 
 
 ALERT_TYPE_MEANINGS = {
@@ -1531,6 +1673,7 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
 
             AlertLog.log_alert(
                 entry["ticker"], entry["name"], entry["direction"], entry["price"], entry["rsi"], stop_target,
+                source=PREFIX_SOURCE_LABELS[prefix], signal_type="RSI Wave",
             )
 
         previous_reversal = st.session_state[f"{prefix}_reversal_states"]
@@ -1587,6 +1730,7 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
 
             AlertLog.log_alert(
                 signal["ticker"], signal["name"], signal["direction"], signal["price"], signal["rsi"], stop_target,
+                source=PREFIX_SOURCE_LABELS[prefix], signal_type="Reversal 1H",
             )
 
     previous_daily = st.session_state[f"{prefix}_daily_reversal_states"]
@@ -1643,6 +1787,7 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
 
         AlertLog.log_alert(
             signal["ticker"], signal["name"], signal["direction"], signal["price"], signal["rsi"], stop_target,
+            source=PREFIX_SOURCE_LABELS[prefix], signal_type="Daily Reversal",
         )
 
     new_weekly_signals = (
@@ -1685,6 +1830,7 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
 
         AlertLog.log_alert(
             signal["ticker"], signal["name"], "LONG", signal["price"], signal["rsi"], None,
+            source=PREFIX_SOURCE_LABELS[prefix], signal_type="Weekly Confluence",
         )
 
 
@@ -2989,12 +3135,15 @@ def main():
     # never actually scanned (stale/fake), duplicating Command Center
     # without the fix; its AI Score/chart/stock-details features had
     # no unique value the four specialized tabs don't already cover.
-    tab_command, tab_notifications, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals, tab_algo_test = st.tabs(
-        ["🎯 Command Center", "🔔 Notifications", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals", "🧪 Algo Test"]
+    tab_command, tab_weekly, tab_notifications, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals, tab_algo_test = st.tabs(
+        ["🎯 Command Center", "🗓 Weekly Report", "🔔 Notifications", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals", "🧪 Algo Test"]
     )
 
     with tab_command:
         render_command_center_tab()
+
+    with tab_weekly:
+        render_weekly_report_tab()
 
     with tab_notifications:
         render_notifications_tab()
