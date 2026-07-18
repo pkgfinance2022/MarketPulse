@@ -21,7 +21,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from analysis import fifteen_min_readiness
-from analysis.backtester import backtest_daily, backtest_reversal_playbook, backtest_rsi_wave, backtest_weekly, summarize_trades
+from analysis.backtester import backtest_daily, backtest_reversal_playbook, backtest_rsi_divergence, backtest_rsi_wave, backtest_weekly, summarize_trades
 from analysis.reversal_playbook import ReversalPlaybook
 from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
 from analysis.rsi_wave_strategy import RSIWaveStrategy
@@ -2784,8 +2784,12 @@ def render_algo_test_tab():
     if show_hourly:
         with st.spinner(f"Backtesting {ticker} Hourly signals (last 5 days)..."):
             _render_backtest_section(
-                "🕐 Hourly — RSI Wave + Reversal Playbook (last 5 days)",
-                [backtest_rsi_wave(ticker, window_days=5), backtest_reversal_playbook(ticker, window_days=5)],
+                "🕐 Hourly — RSI Wave + Reversal Playbook + RSI Divergence (last 5 days)",
+                [
+                    backtest_rsi_wave(ticker, window_days=5),
+                    backtest_reversal_playbook(ticker, window_days=5),
+                    backtest_rsi_divergence(ticker, window_days=5),
+                ],
             )
 
     with st.spinner(f"Backtesting {ticker} Daily signals (last 3 months)..."):
