@@ -18,6 +18,11 @@ class Header:
                 "Professional Market Intelligence Dashboard"
             )
 
+            st.markdown(
+                "<span style='font-size:0.85rem; color:gray;'>Prem Kumar Gupta&trade;</span>",
+                unsafe_allow_html=True,
+            )
+
         with right:
 
             st.metric(
