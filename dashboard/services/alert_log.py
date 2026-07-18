@@ -43,21 +43,34 @@ COLUMNS = [
 
 
 class AlertLog:
+    """
+    All methods take an optional `path` - defaults to LOG_PATH (the
+    local, gitignored per-session log the Streamlit app itself writes
+    to), but scripts/telegram_scan.py's standalone GitHub Actions
+    scanner passes its own separate, git-tracked path instead (see
+    that script). Two independent processes can't safely share one
+    git-tracked CSV - pandas rewrites the whole file on every write,
+    so any two concurrent changes look like a full-file conflict, not
+    a clean append. Giving each writer its own file avoids that
+    entirely; dashboard/app.py merges both at read time for reporting.
+    """
 
     @staticmethod
-    def _ensure():
+    def _ensure(path=None):
 
-        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        path = path or LOG_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
 
-        if not LOG_PATH.exists():
-            pd.DataFrame(columns=COLUMNS).to_csv(LOG_PATH, index=False)
+        if not path.exists():
+            pd.DataFrame(columns=COLUMNS).to_csv(path, index=False)
 
     @classmethod
-    def load(cls):
+    def load(cls, path=None):
 
-        cls._ensure()
+        path = path or LOG_PATH
+        cls._ensure(path)
 
-        df = pd.read_csv(LOG_PATH)
+        df = pd.read_csv(path)
 
         # Source/SignalType were added after this log already had real
         # rows in production - backfill so older CSVs (missing these
@@ -69,7 +82,7 @@ class AlertLog:
         return df
 
     @classmethod
-    def recently_logged(cls, ticker, direction, within_minutes=60):
+    def recently_logged(cls, ticker, direction, within_minutes=60, path=None):
         """
         True if this exact ticker+direction was already logged within
         the last `within_minutes`. Backed by the shared CSV (not
@@ -82,9 +95,7 @@ class AlertLog:
         a genuinely new event each time.
         """
 
-        cls._ensure()
-
-        df = cls.load()
+        df = cls.load(path)
 
         if df.empty:
             return False
@@ -102,11 +113,10 @@ class AlertLog:
         return (now_cet().replace(tzinfo=None) - last_logged).total_seconds() < within_minutes * 60
 
     @classmethod
-    def log_alert(cls, ticker, name, direction, entry_price, rsi, stop_target, source="Unknown", signal_type="Unknown"):
+    def log_alert(cls, ticker, name, direction, entry_price, rsi, stop_target, source="Unknown", signal_type="Unknown", path=None):
 
-        cls._ensure()
-
-        df = cls.load()
+        path = path or LOG_PATH
+        df = cls.load(path)
 
         row = {
             "Timestamp": now_cet().strftime("%Y-%m-%d %H:%M:%S"),
@@ -128,10 +138,10 @@ class AlertLog:
         }
 
         df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
-        df.to_csv(LOG_PATH, index=False)
+        df.to_csv(path, index=False)
 
     @classmethod
-    def evaluate(cls):
+    def evaluate(cls, path=None):
         """
         Re-checks every still-OPEN alert against the latest price:
         marks it HIT TARGET / HIT STOP if price has reached either
@@ -139,7 +149,8 @@ class AlertLog:
         the full (updated) log.
         """
 
-        df = cls.load()
+        path = path or LOG_PATH
+        df = cls.load(path)
 
         if df.empty:
             return df
@@ -209,18 +220,19 @@ class AlertLog:
                 df.at[idx, "ClosedPrice"] = round(price, 2)
                 df.at[idx, "ClosedAt"] = now_cet().strftime("%Y-%m-%d %H:%M:%S")
 
-        df.to_csv(LOG_PATH, index=False)
+        df.to_csv(path, index=False)
 
         return df
 
     @classmethod
-    def remove(cls, row_index):
+    def remove(cls, row_index, path=None):
 
-        df = cls.load()
+        path = path or LOG_PATH
+        df = cls.load(path)
 
         if row_index in df.index:
             df = df.drop(index=row_index).reset_index(drop=True)
-            df.to_csv(LOG_PATH, index=False)
+            df.to_csv(path, index=False)
 
     @staticmethod
     def summary(df):

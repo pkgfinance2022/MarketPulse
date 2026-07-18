@@ -37,6 +37,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add database/scan_state.json
+          git add database/scan_state.json database/gh_alert_log.csv
           git diff --cached --quiet && echo "No state change - skipping commit" || git commit -m "Update scan state [skip ci]"
           git push

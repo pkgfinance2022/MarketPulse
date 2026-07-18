@@ -49,9 +49,18 @@ from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
 from analysis.rsi_wave_strategy import RSIWaveStrategy
 from dashboard.services.rsi_wave_status import RSIWaveStatusService
 from dashboard.services.telegram_notifier import TelegramNotifier
+from dashboard.services.alert_log import AlertLog
 from dashboard.services import time_utils
 
 STATE_PATH = REPO_ROOT / "database" / "scan_state.json"
+
+# Separate, git-tracked log (committed by the workflow, same as
+# scan_state.json) rather than the Streamlit app's own gitignored
+# database/alert_log.csv - two independent processes can't safely
+# share one CSV that gets fully rewritten on every write (see
+# AlertLog's own docstring). dashboard/app.py's Weekly Report /
+# Alert Tracking merge both files at read time for a complete picture.
+ALERT_LOG_PATH = REPO_ROOT / "database" / "gh_alert_log.csv"
 
 CRYPTO_ALERT_TICKER = "BTC-USD"
 GLOBAL_MACRO_INDIA_INCLUDE = {"^NSEI", "^NSEBANK"}   # mirrors DashboardLoader.GLOBAL_MACRO_INDIA_INCLUDE
@@ -109,7 +118,7 @@ def tickers_for(country, sector="All"):
     return [(a.symbol, a.name) for a in assets]
 
 
-def send_alert(name, ticker, label, direction, price, rsi, stop_target, timeframe, description="", event_time=None):
+def send_alert(name, ticker, label, direction, price, rsi, stop_target, timeframe, description="", event_time=None, source="Unknown", signal_type="Unknown"):
     """
     event_time is the actual bar/signal time (not "now") - formatted
     the same way Command Center's own "When" column shows it, so a
@@ -117,6 +126,11 @@ def send_alert(name, ticker, label, direction, price, rsi, stop_target, timefram
     the same event. Telegram's own message timestamp only reflects
     when this hourly scan happened to run, which can lag the real
     signal by up to an hour.
+
+    Also logged to AlertLog (its own git-tracked path - see
+    ALERT_LOG_PATH) regardless of whether Telegram is configured, so
+    this always shows up in the dashboard's Weekly Report / Alert
+    Tracking even on a run where credentials aren't set.
     """
 
     icon = "🟢" if direction == "LONG" else "🔴"
@@ -140,8 +154,13 @@ def send_alert(name, ticker, label, direction, price, rsi, stop_target, timefram
     else:
         print("Telegram not configured (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID missing) - alert logged here only.")
 
+    AlertLog.log_alert(
+        ticker, name, direction, price, rsi, stop_target,
+        source=source, signal_type=signal_type, path=ALERT_LOG_PATH,
+    )
 
-def check_hourly(ticker, name, state, is_first_run):
+
+def check_hourly(ticker, name, state, is_first_run, source):
     """RSI Wave entries + Reversal Playbook 1H BUY/SELL - Global Indices + Crypto(BTC) only."""
 
     try:
@@ -163,7 +182,7 @@ def check_hourly(ticker, name, state, is_first_run):
             status = RSIWaveStatusService.analyse(ticker)
             stop_target = status["stop_target"] if status else None
 
-            send_alert(name, ticker, "RSI Wave entry", direction, last["price"], last["rsi"], stop_target, "Hourly", desc, event_time)
+            send_alert(name, ticker, "RSI Wave entry", direction, last["price"], last["rsi"], stop_target, "Hourly", desc, event_time, source=source, signal_type="RSI Wave")
 
         state[key] = wave_state
 
@@ -185,12 +204,12 @@ def check_hourly(ticker, name, state, is_first_run):
             label = REVERSAL_SIGNAL_LABELS.get(rev_state, rev_state)
             last = result["trace"][-1]
 
-            send_alert(name, ticker, label, direction, last["price"], last["rsi"], levels, "Reversal Playbook 1H", desc, event_time)
+            send_alert(name, ticker, label, direction, last["price"], last["rsi"], levels, "Reversal Playbook 1H", desc, event_time, source=source, signal_type="Reversal 1H")
 
         state[key] = rev_state
 
 
-def check_daily_weekly(ticker, name, state, is_first_run):
+def check_daily_weekly(ticker, name, state, is_first_run, source):
     """Reversal Playbook Daily+Weekly - US Stocks + Indian Stocks + Crypto(BTC)."""
 
     try:
@@ -212,7 +231,7 @@ def check_daily_weekly(ticker, name, state, is_first_run):
         label = REVERSAL_SIGNAL_LABELS.get(daily_state, daily_state)
         last = result["trace"][-1]
 
-        send_alert(name, ticker, label, direction, last["price"], last["rsi"], levels, "Daily", desc, event_time)
+        send_alert(name, ticker, label, direction, last["price"], last["rsi"], levels, "Daily", desc, event_time, source=source, signal_type="Daily Reversal")
 
     state[key] = daily_state
 
@@ -225,7 +244,7 @@ def check_daily_weekly(ticker, name, state, is_first_run):
         last = result["trace"][-1]
         label = "Multi-try breakout" if weekly_state == "MULTI_TRY_BREAKOUT" else "Path C confirmed"
 
-        send_alert(name, ticker, label, "LONG", last["price"], last["weekly_rsi"], None, "Weekly", weekly_desc, weekly_event_time)
+        send_alert(name, ticker, label, "LONG", last["price"], last["weekly_rsi"], None, "Weekly", weekly_desc, weekly_event_time, source=source, signal_type="Weekly Confluence")
 
     state[weekly_key] = weekly_state
 
@@ -243,24 +262,24 @@ def main():
 
     print("=== Hourly: Global Indices ===")
     for ticker, name in tickers_for("Global", "All"):
-        check_hourly(ticker, name, state, is_first_run)
+        check_hourly(ticker, name, state, is_first_run, source="Global Indices")
         time.sleep(PACE_SECONDS)
 
     print("=== Hourly: Crypto (BTC-USD only) ===")
-    check_hourly(CRYPTO_ALERT_TICKER, "Bitcoin", state, is_first_run)
+    check_hourly(CRYPTO_ALERT_TICKER, "Bitcoin", state, is_first_run, source="Crypto")
 
     print("=== Daily+Weekly: US Stocks ===")
     for ticker, name in tickers_for("USA", "All"):
-        check_daily_weekly(ticker, name, state, is_first_run)
+        check_daily_weekly(ticker, name, state, is_first_run, source="US Stocks")
         time.sleep(PACE_SECONDS)
 
     print("=== Daily+Weekly: Indian Stocks ===")
     for ticker, name in tickers_for("India", "All"):
-        check_daily_weekly(ticker, name, state, is_first_run)
+        check_daily_weekly(ticker, name, state, is_first_run, source="Indian Stocks")
         time.sleep(PACE_SECONDS)
 
     print("=== Daily+Weekly: Crypto (BTC-USD only) ===")
-    check_daily_weekly(CRYPTO_ALERT_TICKER, "Bitcoin", state, is_first_run)
+    check_daily_weekly(CRYPTO_ALERT_TICKER, "Bitcoin", state, is_first_run, source="Crypto")
 
     save_state(state)
     print("Done.")

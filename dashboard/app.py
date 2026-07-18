@@ -1092,7 +1092,7 @@ def render_notifications_feed():
 
     st.subheader("🔔 Notifications")
 
-    df = AlertLog.load()
+    df = _load_combined_alert_log()
 
     if df.empty:
         st.info("No notifications yet - alerts will show up here the moment something fires.")
@@ -1142,6 +1142,29 @@ def render_notifications_feed():
                 st.caption(_humanize_alert_age(row["_ts"]))
                 if pd.notna(row["_ts"]):
                     st.caption(row["_ts"].strftime("%b %d, %H:%M CET"))
+
+
+GH_ALERT_LOG_PATH = PROJECT_ROOT / "database" / "gh_alert_log.csv"
+
+
+def _load_combined_alert_log():
+    """
+    Merges the Streamlit app's own local log with the standalone
+    GitHub Actions scanner's separate, git-tracked log (see
+    scripts/telegram_scan.py's ALERT_LOG_PATH) - two independent
+    processes, two files, combined here so Weekly Report / Alert
+    Tracking show a complete picture regardless of which one actually
+    fired a given alert.
+    """
+
+    local_df = AlertLog.load()
+
+    if not GH_ALERT_LOG_PATH.exists():
+        return local_df
+
+    gh_df = AlertLog.load(path=GH_ALERT_LOG_PATH)
+
+    return pd.concat([local_df, gh_df], ignore_index=True)
 
 
 def render_notifications_tab():
@@ -1199,8 +1222,10 @@ def render_alert_tracking():
     if st.button("🔄 Check alert outcomes", key="refresh_alert_log"):
         with st.spinner("Checking current prices against each alert's stop/target..."):
             AlertLog.evaluate()
+            if GH_ALERT_LOG_PATH.exists():
+                AlertLog.evaluate(path=GH_ALERT_LOG_PATH)
 
-    df = AlertLog.load()
+    df = _load_combined_alert_log()
 
     _render_alert_stats_and_table(df, key_prefix="alltime")
 
@@ -1243,7 +1268,7 @@ def render_weekly_report_tab():
 
     st.subheader("🗓 Weekly Report")
 
-    full_df = AlertLog.load()
+    full_df = _load_combined_alert_log()
 
     if full_df.empty:
         st.caption("No alerts logged yet - check back once some have fired.")
@@ -1254,13 +1279,16 @@ def render_weekly_report_tab():
     week_start = time_utils.now_cet().replace(tzinfo=None) - timedelta(days=7)
     st.caption(
         f"{week_start.strftime('%b %d')} – {time_utils.now_cet().strftime('%b %d, %Y')} "
-        "· every alert this app actually sent in the last 7 days, and how it played out."
+        "· every alert this app actually sent in the last 7 days (including the always-on "
+        "GitHub Actions scanner), and how it played out."
     )
 
     if st.button("🔄 Check alert outcomes", key="refresh_alert_log_weekly"):
         with st.spinner("Checking current prices against each alert's stop/target..."):
             AlertLog.evaluate()
-        full_df = AlertLog.load()
+            if GH_ALERT_LOG_PATH.exists():
+                AlertLog.evaluate(path=GH_ALERT_LOG_PATH)
+        full_df = _load_combined_alert_log()
         full_df["Timestamp"] = pd.to_datetime(full_df["Timestamp"])
 
     week_df = full_df[full_df["Timestamp"] >= week_start]
