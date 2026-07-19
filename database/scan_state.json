@@ -431,10 +431,14 @@
   "^FCHI:wave": "WATCHING",
   "^FTSE:reversal_1h": "WATCHING",
   "^FTSE:wave": "WATCHING",
+  "^FVX:reversal_1h": "WATCHING",
+  "^FVX:wave": "WATCHING",
   "^GDAXI:reversal_1h": "BUY_ALERT",
   "^GDAXI:wave": "WATCHING",
   "^GSPC:reversal_1h": "WATCHING",
   "^GSPC:wave": "WATCHING",
+  "^IRX:reversal_1h": "WATCHING",
+  "^IRX:wave": "WAVE_LONG",
   "^KS11:reversal_1h": "WATCHING",
   "^KS11:wave": "ALERT_LONG",
   "^N225:reversal_1h": "BUY_ALERT",
@@ -449,6 +453,8 @@
   "^RUT:wave": "ALERT_LONG",
   "^STI:reversal_1h": "WATCHING",
   "^STI:wave": "WAVE_LONG",
+  "^TNX:reversal_1h": "WATCHING",
+  "^TNX:wave": "WATCHING",
   "^VIX:reversal_1h": "WATCHING",
   "^VIX:wave": "ALERT_SHORT"
 }
