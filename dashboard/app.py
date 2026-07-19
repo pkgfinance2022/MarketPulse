@@ -3078,10 +3078,18 @@ def _render_top_news():
         title = item.get("title") or "(untitled)"
         url = item.get("url")
         publisher = item.get("publisher") or ""
+
+        try:
+            when = time_utils.format_event_time(pd.Timestamp(item.get("pub_date"))) if item.get("pub_date") else None
+        except (ValueError, TypeError):
+            when = None
+
+        meta = " — ".join(part for part in (publisher, when) if part)
+        meta_text = f" — *{meta}*" if meta else ""
         if url:
-            st.markdown(f"- [{title}]({url}) — *{publisher}*")
+            st.markdown(f"- [{title}]({url}){meta_text}")
         else:
-            st.markdown(f"- {title} — *{publisher}*")
+            st.markdown(f"- {title}{meta_text}")
 
 
 def _render_economic_calendar():
@@ -4252,6 +4260,171 @@ def render_ema_proximity_tab():
         )
 
 
+def _highest_conviction_pick():
+    """
+    The single best currently-actionable signal across all four
+    sources, by backtested avg return - the exact same real data
+    Command Center's Highest Conviction section already computes, just
+    taking the top-1 result for the CEO Summary card.
+    """
+
+    rows, _ = _build_command_center_rows()
+    ranked = conviction_ranking.rank(rows, top_n=1)
+
+    return ranked[0] if ranked else None
+
+
+def _avoid_pick(global_df):
+    """
+    The worst-performing major index today (see
+    dashboard/services/cross_asset_status.py's CROSS_ASSET_TARGETS),
+    annotated with a real aligned bearish driver note if one exists -
+    "today's biggest laggard", not a forecast. Returns None if nothing
+    among the majors is actually negative today (no "avoid" to force).
+    """
+
+    if global_df is None or global_df.empty:
+        return None
+
+    candidates = []
+
+    for ticker, name in CROSS_ASSET_TARGETS.items():
+
+        change = _macro_value(global_df, ticker, "Change %")
+
+        if change is not None:
+            candidates.append({"ticker": ticker, "name": name, "change": change})
+
+    if not candidates:
+        return None
+
+    worst = min(candidates, key=lambda c: c["change"])
+
+    if worst["change"] >= 0:
+        return None
+
+    aligned_note = None
+    cache_entry = universe_cache.get("cross_asset_drivers")
+
+    if cache_entry and cache_entry["data"]:
+
+        correlations = cache_entry["data"]["correlations"].get(worst["ticker"], {})
+        today_driver_changes = {
+            "US10Y": _macro_value(global_df, "^TNX", "Change %"),
+            "DXY": _macro_value(global_df, "DX-Y.NYB", "Change %"),
+            "Oil": _macro_value(global_df, "CL=F", "Change %"),
+            "Gold": _macro_value(global_df, "GC=F", "Change %"),
+        }
+        notes = CrossAssetDriverEngine.explain_today(worst["ticker"], correlations, today_driver_changes)
+        bearish_notes = [n for n in notes if n["expected_direction"] == "down"]
+
+        if bearish_notes:
+            aligned_note = bearish_notes[0]
+
+    return {"name": worst["name"], "change": worst["change"], "aligned_note": aligned_note}
+
+
+def _build_market_brief(regime, avoid, conviction):
+    """
+    Rule-based (not AI-generated) narrative paragraph, built entirely
+    from real facts already computed elsewhere on this page (regime,
+    today's weakest major index, the highest-conviction setup, the
+    next calendar catalyst) - deterministic and reproducible, the
+    explicit tradeoff chosen over a real LLM API call (no external
+    dependency, no per-generation cost, but reads more like a formula
+    than genuine prose).
+    """
+
+    sentences = []
+
+    regime_text = regime["label"].split(" ", 1)[-1] if " " in regime["label"] else regime["label"]
+    sentences.append(f"{regime_text} conditions today")
+
+    if regime["factors"]:
+        sentences.append(regime["factors"][0])
+
+    if avoid:
+        sentences.append(f"{avoid['name']} is today's weakest major index ({avoid['change']:+.2f}%)")
+
+    if conviction:
+        sentences.append(f"the highest-conviction setup right now is {conviction['Ticker']} ({conviction['Signal']})")
+
+    events = economic_calendar.upcoming(days=21)
+
+    if not events.empty:
+        next_event = events.iloc[0]
+        sentences.append(f"next major catalyst: {next_event['Event']} on {next_event['Date'].strftime('%b %d')}")
+
+    if not sentences:
+        return None
+
+    return ". ".join(s[0].upper() + s[1:] for s in sentences) + "."
+
+
+def render_ceo_summary():
+    """
+    The persistent, always-visible-above-the-tabs "5 second decision"
+    card - Risk Regime, Highest Conviction, Avoid, the real factors
+    behind them, and a rule-based Market Brief paragraph. Reuses
+    exactly the same real data every other tab already computes
+    (Market Regime, conviction ranking, Cross-Asset Context, Economic
+    Calendar) - no new analysis, just a condensed synthesis so the
+    headline read doesn't require clicking into Daily Must Open /
+    Command Center first. Reads from universe_cache via
+    _get_cached_market, same as Command Center/Market 360 - no
+    dependency on which tab has been visited.
+    """
+
+    global_market = _get_cached_market("global_market")
+
+    if global_market is None:
+        st.info("🧭 CEO Summary — still scanning for the first time, check back in a moment.")
+        return
+
+    df = global_market["df"]
+
+    vix_level = _macro_value(df, "^VIX", "Price")
+    vix_change = _macro_value(df, "^VIX", "Change %")
+    dxy_change = _macro_value(df, "DX-Y.NYB", "Change %")
+    y10_level = _macro_value(df, "^TNX", "Price")
+    y10_change = _macro_value(df, "^TNX", "Change %")
+    gold_change = _macro_value(df, "GC=F", "Change %")
+    index_rows = df[df["Sector"].astype(str).str.contains("Indices", na=False)]
+    breadth = (index_rows["Change %"] > 0).mean() * 100 if not index_rows.empty else None
+
+    regime = MarketRegimeEngine.classify(
+        vix_level=vix_level, vix_change_pct=vix_change, dxy_change_pct=dxy_change,
+        yield10_level=y10_level, yield10_change_pct=y10_change, gold_change_pct=gold_change,
+        breadth_pct=breadth,
+    )
+
+    conviction = _highest_conviction_pick()
+    avoid = _avoid_pick(df)
+
+    with st.container(border=True):
+
+        st.markdown("#### 🧭 Today's Market — CEO Summary")
+
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
+            st.metric("Risk Regime", regime["label"])
+
+        with c2:
+            st.metric("Highest Conviction", conviction["Ticker"] if conviction else "—", delta=conviction["Signal"] if conviction else None)
+
+        with c3:
+            st.metric("Avoid", avoid["name"] if avoid else "Nothing flagged", delta=f"{avoid['change']:+.2f}%" if avoid else None)
+
+        if regime["factors"]:
+            st.caption("**Why:** " + " · ".join(regime["factors"][:3]))
+
+        brief = _build_market_brief(regime, avoid, conviction)
+
+        if brief:
+            st.caption(f"📋 **Market Brief:** {brief}")
+
+
 def main():
 
     _warm_background_scans()
@@ -4264,6 +4437,8 @@ def main():
 
     Header.render()
     MarketStatus.render()
+
+    render_ceo_summary()
 
     refresh_col, _ = st.columns([1, 5])
 
