@@ -3354,6 +3354,101 @@ def _classify_ticker(ticker):
     return "stock"
 
 
+MARKET_360_SOURCES = [
+    ("🌍 Global Indices", "global_market"),
+    ("🇺🇸 US Stocks", "us_market"),
+    ("🇮🇳 Indian Stocks", "india_market"),
+    ("🪙 Crypto", "crypto_market"),
+]
+
+
+def _build_market_360_data():
+    """
+    Pure data-building step, no fresh fetch - combines whatever's
+    already cached in session state (same reasoning as Command
+    Center's _build_command_center_rows()) into one Source/Sector/
+    Ticker/Name/Change % frame for the heatmap below. A tab you haven't
+    visited yet this session simply isn't included (flagged, not
+    silently missing).
+    """
+
+    rows = []
+    not_scanned = []
+
+    for label, session_key in MARKET_360_SOURCES:
+
+        market = st.session_state.get(session_key)
+
+        if market is None:
+            not_scanned.append(label)
+            continue
+
+        df = market["df"]
+
+        if df.empty:
+            continue
+
+        for _, row in df.iterrows():
+
+            change = row.get("Change %")
+
+            if change is None or pd.isna(change):
+                continue
+
+            rows.append({
+                "Source": label,
+                "Sector": row.get("Sector") or "Other",
+                "Ticker": row["Ticker"],
+                "Name": row["Name"],
+                "Change %": float(change),
+            })
+
+    return pd.DataFrame(rows), not_scanned
+
+
+def render_market_360_tab():
+    """
+    Visual companion to 🌅 Daily Must Open - that tab is text/table
+    based for a fast scan; this one is chart-only, for a slower "what's
+    actually hot or cold across the whole universe" look. Reads the
+    same already-cached session state every other tab does - no fetch
+    of its own.
+    """
+
+    st.subheader("📊 Market 360 — Heatmap")
+    st.caption(
+        "Every scanned asset, grouped by source and sector, colored by today's % change - the fastest "
+        "visual read of what's hot and what's not. Box size is uniform (not weighted by market cap). "
+        "For the text/table morning briefing, see 🌅 Daily Must Open."
+    )
+
+    df, not_scanned = _build_market_360_data()
+
+    if not_scanned:
+        st.info("Not yet scanned this session: " + ", ".join(not_scanned) + " — visit those tabs at least once to include them here.")
+
+    if df.empty:
+        st.warning("Nothing scanned yet this session.")
+        return
+
+    import plotly.express as px
+
+    fig = px.treemap(
+        df,
+        path=[px.Constant("All"), "Source", "Sector", "Ticker"],
+        values=[1] * len(df),
+        color="Change %",
+        color_continuous_scale="RdYlGn",
+        color_continuous_midpoint=0,
+        range_color=[-3, 3],
+        hover_data={"Name": True, "Change %": ":+.2f"},
+    )
+    fig.update_traces(texttemplate="%{label}<br>%{customdata[1]}", textposition="middle center")
+    fig.update_layout(margin=dict(t=10, l=10, r=10, b=10), height=700)
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
 def render_algo_test_tab():
 
     st.subheader("🧪 Algo Test — check any symbol on the fly")
@@ -4059,12 +4154,15 @@ def main():
     # Command Center without the fix; its AI Score/chart/stock-details
     # features had no unique value the four specialized tabs don't
     # already cover.
-    tab_daily, tab_command, tab_weekly, tab_ema_watch, tab_notifications, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals, tab_fund_insights, tab_algo_test = st.tabs(
-        ["🌅 Daily Must Open", "🎯 Command Center", "🗓 Weekly Report", "📍 200 EMA Watch", "🔔 Notifications", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals", "🧠 Fundamentals Insights", "🧪 Algo Test"]
+    tab_daily, tab_360, tab_command, tab_weekly, tab_ema_watch, tab_notifications, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals, tab_fund_insights, tab_algo_test = st.tabs(
+        ["🌅 Daily Must Open", "📊 Market 360", "🎯 Command Center", "🗓 Weekly Report", "📍 200 EMA Watch", "🔔 Notifications", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals", "🧠 Fundamentals Insights", "🧪 Algo Test"]
     )
 
     with tab_daily:
         render_daily_must_open_tab()
+
+    with tab_360:
+        render_market_360_tab()
 
     with tab_command:
         render_command_center_tab()
