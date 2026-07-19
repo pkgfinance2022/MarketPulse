@@ -22,6 +22,7 @@ import streamlit.components.v1 as components
 
 from analysis import fifteen_min_readiness
 from analysis.backtester import backtest_daily, backtest_reversal_playbook, backtest_rsi_divergence, backtest_rsi_wave, backtest_weekly, summarize_trades
+from analysis.cross_asset_drivers import CrossAssetDriverEngine
 from analysis.market_regime import MarketRegimeEngine
 from analysis.reversal_playbook import ReversalPlaybook
 from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
@@ -40,6 +41,7 @@ from dashboard.services import trusted_ips
 from dashboard.services.reversal_status import ReversalStatusService
 from dashboard.services.reversal_status_daily import DailyReversalStatusService
 from analysis.ema_proximity import PROXIMITY_TOLERANCE_PCT
+from dashboard.services.cross_asset_status import CrossAssetStatusService, CROSS_ASSET_TARGETS
 from dashboard.services.ema_proximity_status import EMAProximityStatusService
 from dashboard.services.pattern_status import ChartPatternStatusService, PATTERN_STATE_LABELS
 from dashboard.services.performance_ranking_status import PerformanceRankingStatusService
@@ -2904,6 +2906,72 @@ def _render_macro_dashboard(df):
     )
 
 
+def _render_cross_asset_context(df):
+    """
+    Phase 2 (Cross-Asset Intelligence) - "why is X moving today", for
+    the curated set of major indices actually validated to have a real
+    same-day relationship with US10Y/DXY/Oil/Gold (see
+    analysis/cross_asset_drivers.py). Deliberately framed as concurrent
+    alignment, not a forecast - checked against 2 years of real data
+    first: these relationships are regime-dependent (much stronger
+    over a recent 90-day window than a 2-year average) and have ~zero
+    next-day predictive power, so this explains today, it doesn't
+    predict tomorrow.
+    """
+
+    cache_entry = universe_cache.get("cross_asset_drivers")
+
+    if cache_entry is None or cache_entry["data"] is None:
+        return
+
+    all_correlations = cache_entry["data"]["correlations"]
+
+    today_driver_changes = {
+        "US10Y": _macro_value(df, "^TNX", "Change %"),
+        "DXY": _macro_value(df, "DX-Y.NYB", "Change %"),
+        "Oil": _macro_value(df, "CL=F", "Change %"),
+        "Gold": _macro_value(df, "GC=F", "Change %"),
+    }
+
+    any_shown = False
+
+    for ticker, name in CROSS_ASSET_TARGETS.items():
+
+        correlations = all_correlations.get(ticker, {})
+
+        if not correlations:
+            continue
+
+        notes = CrossAssetDriverEngine.explain_today(ticker, correlations, today_driver_changes)
+
+        if not notes:
+            continue
+
+        if not any_shown:
+            st.markdown("**🔗 Cross-Asset Context — Why It's Moving**")
+            st.caption(
+                "Concurrent alignment with today's yields/dollar/oil/gold moves, for indices with a real "
+                "measured relationship (90-day rolling correlation) - not a forecast, and not every index "
+                "has a clean story every day."
+            )
+            any_shown = True
+
+        index_change = _macro_value(df, ticker, "Change %")
+        change_text = f"{index_change:+.2f}%" if index_change is not None else "—"
+
+        bullet_parts = []
+        for note in notes:
+            bullet_parts.append(
+                f"{note['driver']} {note['driver_change_pct']:+.2f}% (corr {note['correlation']:+.2f}, "
+                f"consistent with {name} {note['expected_direction']})"
+            )
+
+        st.write(f"- **{name}** ({change_text}): " + "; ".join(bullet_parts))
+
+    if not any_shown:
+        st.caption("🔗 No clean cross-asset story for the major indices today - drivers either didn't move enough or aren't correlated enough right now.")
+
+
 TOP_WORST_PERFORMERS_N = 10
 
 
@@ -3041,6 +3109,11 @@ def render_daily_must_open_tab():
     if perf_stale:
         universe_cache.start_scan("performance_ranking", _scan_performance_ranking_data, pool="performance_ranking")
 
+    cross_asset_entry = universe_cache.get("cross_asset_drivers")
+    cross_asset_stale = cross_asset_entry is None or (not cross_asset_entry["loading"] and (now - cross_asset_entry["ts"]) >= CROSS_ASSET_REFRESH_SECONDS)
+    if cross_asset_stale:
+        universe_cache.start_scan("cross_asset_drivers", _scan_cross_asset_drivers_data, pool="cross_asset_drivers")
+
     global_market = st.session_state.get("global_market")
 
     if global_market is None:
@@ -3052,6 +3125,8 @@ def render_daily_must_open_tab():
         _render_key_levels(df)
         st.divider()
         _render_macro_dashboard(df)
+        st.divider()
+        _render_cross_asset_context(df)
 
     st.divider()
     _render_top_worst_performers()
@@ -3974,6 +4049,11 @@ def _warm_background_scans():
     if perf_stale:
         universe_cache.start_scan("performance_ranking", _scan_performance_ranking_data, pool="performance_ranking")
 
+    cross_asset_entry = universe_cache.get("cross_asset_drivers")
+    cross_asset_stale = cross_asset_entry is None or (not cross_asset_entry["loading"] and (now - cross_asset_entry["ts"]) >= CROSS_ASSET_REFRESH_SECONDS)
+    if cross_asset_stale:
+        universe_cache.start_scan("cross_asset_drivers", _scan_cross_asset_drivers_data, pool="cross_asset_drivers")
+
 
 EMA_PROXIMITY_SOURCE_LABELS = {"USA": "US Stocks", "India": "Indian Stocks", "Crypto": "Crypto", "Global": "Global Indices"}
 
@@ -4053,6 +4133,22 @@ def _scan_performance_ranking_data():
         })
 
     return {"rows": rows}
+
+
+CROSS_ASSET_REFRESH_SECONDS = 86400   # once a day - rolling 90-day correlations don't meaningfully change intra-day
+
+
+def _scan_cross_asset_drivers_data():
+    """
+    Pure, background-thread-safe scan (no st.* calls) - rolling
+    correlations for a curated set of major indices against US10Y/DXY/
+    Oil/Gold (see analysis/cross_asset_drivers.py,
+    dashboard/services/cross_asset_status.py). TODAY's actual driver
+    moves are read fresh from the already-cached global_market df at
+    render time, not fetched again here.
+    """
+
+    return {"correlations": CrossAssetStatusService.screen_correlations()}
 
 
 def render_ema_proximity_tab():

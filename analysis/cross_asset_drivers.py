@@ -119,7 +119,6 @@ class CrossAssetDriverEngine:
             if change is None or abs(change) < DRIVER_MOVE_THRESHOLD_PCT:
                 continue
 
-            expected_direction = "down" if (corr > 0) == (change < 0) else "up"
             # corr > 0 means they move together; corr < 0 means opposite.
             # expected_direction is what `symbol` "should" do today if
             # this relationship holds, given the driver's actual move.
