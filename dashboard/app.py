@@ -1007,41 +1007,6 @@ def _only_active_rows(df, columns):
     return df[mask]
 
 
-def _vix_risk_note(df):
-    """
-    VIX's own 1H Reversal Playbook state, read as a market-wide risk
-    sentiment gauge - reuses the exact same engine already running on
-    every other symbol, no extra fetch (^VIX is just another row in
-    the Global universe). Rising VIX RSI (crossing/holding above 65)
-    typically coincides with equity weakness, so a fresh BUY signal on
-    an equity index while VIX is doing this deserves extra caution.
-    Purely informational, not a gate - explicitly for you to factor
-    into your own planning, not an automatic suppression.
-    """
-
-    vix_row = df[df["Ticker"] == "^VIX"]
-
-    if vix_row.empty:
-        return None
-
-    row = vix_row.iloc[0]
-    rsi = row.get("1H RSI")
-    reversal_label = str(row.get("Reversal", ""))
-
-    if rsi is None or pd.isna(rsi):
-        return None
-
-    rsi = round(float(rsi), 2)
-
-    if "crossed 65" in reversal_label or "Path C forming" in reversal_label or "BUY signal" in reversal_label or rsi >= 65:
-        return f"🔴 VIX Risk-OFF — VIX 1H RSI {rsi} (crossed/holding 65+) — fear rising, be extra cautious with fresh equity BUY signals right now."
-
-    if "SELL" in reversal_label or rsi <= 35:
-        return f"🟢 VIX Risk-ON — VIX 1H RSI {rsi} (falling / below 35) — fear easing, generally supportive of bullish continuation."
-
-    return None
-
-
 @st.fragment(run_every=45)
 def render_global_indices_live():
     """
@@ -1065,15 +1030,7 @@ def render_global_indices_live():
     df = DashboardLoader.refresh_intraday_prices(market["df"])
     st.session_state.global_market["df"] = df
 
-    st.caption("🔴 Live — refreshes every 45s (scanner: 15m bars · pullback setup: 1H)")
-
-    vix_note = _vix_risk_note(df)
-
-    if vix_note:
-        if vix_note.startswith("🔴"):
-            st.warning(vix_note)
-        else:
-            st.info(vix_note)
+    st.caption("🔴 Live — refreshes every 45s (scanner: 15m bars · pullback setup: 1H). For the VIX/regime risk read, see 🌅 Daily Must Open.")
 
     # "Where did 65 just get crossed" - a quick at-a-glance highlight,
     # since that's often where the real move starts. Reuses the
@@ -3168,23 +3125,9 @@ def _render_command_center_signals():
     st.caption(
         "Aggregates every actionable signal already sitting in Global Indices, US Stocks, Indian Stocks, and "
         "Crypto - reads each tab's cached scan, doesn't trigger any new fetches. Updates itself automatically "
-        "as each tab's background scan completes - no need to visit them first."
+        "as each tab's background scan completes - no need to visit them first. For the VIX/regime risk read, "
+        "see 🌅 Daily Must Open."
     )
-
-    # Same VIX risk-sentiment note the Global Indices tab already shows -
-    # surfaced here too since this is the tab actually checked regularly,
-    # while Global Indices might not be visited every session.
-    global_market = st.session_state.get("global_market")
-
-    if global_market is not None:
-
-        vix_note = _vix_risk_note(global_market["df"])
-
-        if vix_note:
-            if vix_note.startswith("🔴"):
-                st.warning(vix_note)
-            else:
-                st.info(vix_note)
 
     rows, not_scanned = _build_command_center_rows()
 
@@ -3548,7 +3491,8 @@ def render_fundamental_insights_tab():
     st.caption(
         "Loaded from a snapshot scanned once a week (GitHub Actions, independent of this app "
         "being open) - never fetched live here. \"Where to focus\" highlights first, the full "
-        "table is below."
+        "table is below. This is the passive weekly briefing, no filters - for an on-demand "
+        "custom scan (by country, minimum score, etc.), see 💰 Fundamentals instead."
     )
 
     df, latest_date, previous_date = fundamental_insights.load_snapshot()
@@ -3596,7 +3540,9 @@ def render_fundamentals_tab():
         "Finds stocks in india_master/us_master with a genuinely IMPROVING fundamental trend "
         "(revenue, earnings, margin, ROE, analyst sentiment - not just a high snapshot score), "
         "then checks whether the DAILY technical trend agrees. On-demand only - run it whenever "
-        "you want (e.g. weekly, or after earnings season)."
+        "you want a custom filter (country, minimum score, etc.) right now. For the passive "
+        "weekly briefing (loss-to-profit turnarounds, EPS/PE movers) with no setup needed, "
+        "see 🧠 Fundamentals Insights instead."
     )
 
     col1, col2, col3 = st.columns([2, 2, 1])
