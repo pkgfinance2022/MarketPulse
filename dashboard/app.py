@@ -2596,6 +2596,43 @@ def render_universe_tab(prefix, country, title):
 
 
 # (label, session key, columns to scan for actionable rows -> keywords that mark that column's label as "act now")
+SESSION_KEY_TO_CACHE_PREFIX = {
+    "global_market": "global_All",
+    "us_market": "us",
+    "india_market": "india",
+    "crypto_market": "crypto",
+}
+
+
+def _get_cached_market(session_key):
+    """
+    Reads directly from universe_cache instead of st.session_state.
+    _warm_background_scans() already populates universe_cache before
+    the password gate even completes, independent of which tabs get
+    rendered - reading from st.session_state instead (the old
+    approach) meant Command Center/Market 360/Everything Found showed
+    "not yet scanned" until each OTHER tab's own render function
+    happened to run first and copy universe_cache's data across,
+    forcing a click through every tab before these cross-tab views
+    would show anything, even though the data was already sitting
+    there the whole time.
+    """
+
+    prefix = SESSION_KEY_TO_CACHE_PREFIX.get(session_key)
+
+    if prefix is None:
+        return None
+
+    cache_entry = universe_cache.get(prefix)
+
+    if cache_entry is None or cache_entry["data"] is None:
+        return None
+
+    data = cache_entry["data"]
+
+    return {"df": data["df"], "sector": data.get("sector")}
+
+
 COMMAND_CENTER_SOURCES = [
     ("🌍 Global Indices", "global_market"),
     ("🇺🇸 US Stocks", "us_market"),
@@ -2687,7 +2724,7 @@ def _build_command_center_timeframe_df(signal_columns, sources):
 
     for label, session_key in sources:
 
-        market = st.session_state.get(session_key)
+        market = _get_cached_market(session_key)
 
         if market is None:
             continue
@@ -3072,7 +3109,7 @@ def _render_highest_conviction():
     rows, not_scanned = _build_command_center_rows()
 
     if not_scanned:
-        st.info("Not yet scanned this session: " + ", ".join(not_scanned) + " — visit those tabs at least once to include them here.")
+        st.info("Still scanning for the first time: " + ", ".join(not_scanned) + " — this fills in on its own, no need to visit those tabs.")
 
     ranked = conviction_ranking.rank(rows)
 
@@ -3114,10 +3151,10 @@ def render_daily_must_open_tab():
     if cross_asset_stale:
         universe_cache.start_scan("cross_asset_drivers", _scan_cross_asset_drivers_data, pool="cross_asset_drivers")
 
-    global_market = st.session_state.get("global_market")
+    global_market = _get_cached_market("global_market")
 
     if global_market is None:
-        st.info("Global Indices hasn't been scanned yet this session - visit that tab once, then come back here.")
+        st.info("Still scanning Global Indices for the first time — check back in a moment.")
     else:
         df = global_market["df"]
         _render_market_regime(df)
@@ -3156,7 +3193,7 @@ def _build_command_center_rows():
 
     for label, session_key in COMMAND_CENTER_BUYSELL_SOURCES:
 
-        market = st.session_state.get(session_key)
+        market = _get_cached_market(session_key)
 
         if market is None:
             not_scanned.append(label)
@@ -3268,7 +3305,7 @@ def _render_command_center_signals():
     rows, not_scanned = _build_command_center_rows()
 
     if not_scanned:
-        st.info("Not yet scanned this session: " + ", ".join(not_scanned) + " — visit those tabs at least once to include them here.")
+        st.info("Still scanning for the first time: " + ", ".join(not_scanned) + " — this fills in on its own, no need to visit those tabs.")
 
     if rows:
 
@@ -3371,10 +3408,10 @@ def render_global_indices_movers():
         "bottom regardless of their last move, since they're not actually moving right now."
     )
 
-    global_market = st.session_state.get("global_market")
+    global_market = _get_cached_market("global_market")
 
     if global_market is None or global_market["df"].empty:
-        st.info("Global Indices hasn't been scanned yet this session - visit that tab to load it.")
+        st.info("Still scanning Global Indices for the first time — check back in a moment.")
         return
 
     timeframe_choice = st.radio(
@@ -3455,7 +3492,7 @@ def _build_market_360_data():
 
     for label, session_key in MARKET_360_SOURCES:
 
-        market = st.session_state.get(session_key)
+        market = _get_cached_market(session_key)
 
         if market is None:
             not_scanned.append(label)
@@ -3503,7 +3540,7 @@ def render_market_360_tab():
     df, not_scanned = _build_market_360_data()
 
     if not_scanned:
-        st.info("Not yet scanned this session: " + ", ".join(not_scanned) + " — visit those tabs at least once to include them here.")
+        st.info("Still scanning for the first time: " + ", ".join(not_scanned) + " — this fills in on its own, no need to visit those tabs.")
 
     if df.empty:
         st.warning("Nothing scanned yet this session.")
