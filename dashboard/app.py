@@ -2896,6 +2896,8 @@ def _render_market_regime(df):
     for factor in regime["factors"]:
         st.write(f"- {factor}")
 
+    return regime
+
 
 def _render_key_levels(df):
 
@@ -2943,17 +2945,36 @@ def _render_macro_dashboard(df):
     )
 
 
-def _render_cross_asset_context(df):
+CROSS_ASSET_RISK_BY_REGIME_LABEL = {
+    "🔴 Risk-Off": "🔴 High",
+    "🟡 Mixed / Neutral": "🟡 Medium",
+    "🟢 Risk-On": "🟢 Low",
+}
+
+
+def _render_cross_asset_context(df, regime):
     """
-    Phase 2 (Cross-Asset Intelligence) - "why is X moving today", for
-    the curated set of major indices actually validated to have a real
-    same-day relationship with US10Y/DXY/Oil/Gold (see
-    analysis/cross_asset_drivers.py). Deliberately framed as concurrent
-    alignment, not a forecast - checked against 2 years of real data
-    first: these relationships are regime-dependent (much stronger
-    over a recent 90-day window than a 2-year average) and have ~zero
-    next-day predictive power, so this explains today, it doesn't
-    predict tomorrow.
+    Phase 2 (Cross-Asset Intelligence) - "why is X moving today", as
+    one card per major index: aligned factors (drivers whose real
+    90-day correlation actually agrees with today's direction),
+    diverging factors (drivers that moved but DON'T agree - shown
+    honestly rather than cherry-picked away), and a Risk tier tied to
+    today's VIX regime (not a per-index calculation - it's the same
+    market-wide regime read shown above, since a single index doesn't
+    have its own independent "risk level").
+
+    Deliberately no fabricated confidence %/win-probability - see
+    dashboard/services/conviction_ranking.py for why per-instance
+    probabilities aren't shown without real calibration. What IS shown
+    (correlation strength) is a real, computed number, just labeled
+    for what it actually is: how strongly that driver has historically
+    moved with this index, not a chance of the trade working.
+
+    Checked against 2 years of real data before building this: these
+    relationships are regime-dependent (much stronger over a recent
+    90-day window than a 2-year average) and have ~zero next-day
+    predictive power - this explains today, it doesn't predict
+    tomorrow.
     """
 
     cache_entry = universe_cache.get("cross_asset_drivers")
@@ -2969,6 +2990,8 @@ def _render_cross_asset_context(df):
         "Oil": _macro_value(df, "CL=F", "Change %"),
         "Gold": _macro_value(df, "GC=F", "Change %"),
     }
+
+    risk_label = CROSS_ASSET_RISK_BY_REGIME_LABEL.get(regime["label"], "🟡 Medium") if regime else "🟡 Medium"
 
     any_shown = False
 
@@ -2987,23 +3010,33 @@ def _render_cross_asset_context(df):
         if not any_shown:
             st.markdown("**🔗 Cross-Asset Context — Why It's Moving**")
             st.caption(
-                "Concurrent alignment with today's yields/dollar/oil/gold moves, for indices with a real "
-                "measured relationship (90-day rolling correlation) - not a forecast, and not every index "
-                "has a clean story every day."
+                "One card per major index - aligned AND diverging drivers shown honestly (90-day rolling "
+                "correlation, not every index has a clean story every day). Not a forecast."
             )
             any_shown = True
 
         index_change = _macro_value(df, ticker, "Change %")
-        change_text = f"{index_change:+.2f}%" if index_change is not None else "—"
+        actual_direction = "up" if (index_change or 0) >= 0 else "down"
 
-        bullet_parts = []
-        for note in notes:
-            bullet_parts.append(
-                f"{note['driver']} {note['driver_change_pct']:+.2f}% (corr {note['correlation']:+.2f}, "
-                f"consistent with {name} {note['expected_direction']})"
-            )
+        aligned = [n for n in notes if n["expected_direction"] == actual_direction]
+        diverging = [n for n in notes if n["expected_direction"] != actual_direction]
 
-        st.write(f"- **{name}** ({change_text}): " + "; ".join(bullet_parts))
+        avg_strength = sum(abs(n["correlation"]) for n in notes) / len(notes) * 100
+
+        with st.container(border=True):
+
+            st.markdown(f"**{name}** ({index_change:+.2f}%)" if index_change is not None else f"**{name}**")
+            st.caption(f"Alignment strength: {avg_strength:.0f}% (avg |correlation| of today's moved drivers) · Risk: {risk_label}")
+
+            if aligned:
+                st.markdown("Aligned with today's move:")
+                for n in aligned:
+                    st.write(f"✓ {n['driver']} {n['driver_change_pct']:+.2f}% (corr {n['correlation']:+.2f})")
+
+            if diverging:
+                st.markdown("Diverging (would suggest the opposite):")
+                for n in diverging:
+                    st.write(f"✗ {n['driver']} {n['driver_change_pct']:+.2f}% (corr {n['correlation']:+.2f})")
 
     if not any_shown:
         st.caption("🔗 No clean cross-asset story for the major indices today - drivers either didn't move enough or aren't correlated enough right now.")
@@ -3163,13 +3196,13 @@ def render_macro_tab():
         st.info("Still scanning Global Indices for the first time — check back in a moment.")
     else:
         df = global_market["df"]
-        _render_market_regime(df)
+        regime = _render_market_regime(df)
         st.divider()
         _render_key_levels(df)
         st.divider()
         _render_macro_dashboard(df)
         st.divider()
-        _render_cross_asset_context(df)
+        _render_cross_asset_context(df, regime)
 
     st.divider()
     _render_top_worst_performers()
