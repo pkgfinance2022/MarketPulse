@@ -3194,6 +3194,7 @@ def _build_command_center_rows():
                     continue
 
                 why = row.get(full_col, "")
+                stats = conviction_ranking.lookup_stats(column, why)
 
                 rows.append(
                     {
@@ -3205,6 +3206,8 @@ def _build_command_center_rows():
                         "Signal Type": column,
                         "Style": style,
                         "Signal": row[column],
+                        "Win %": stats["win_rate"] if stats else None,
+                        "Loss %": stats["loss_rate"] if stats else None,
                         "When": row.get(ts_col, "—"),
                         "Why": why,
                     }
@@ -3301,7 +3304,7 @@ def _render_command_center_signals():
         # pandas Styler's own default float precision (6 decimals) pads
         # a clean 58576.0 into "58576.000000" regardless of the real
         # value unless a column format is given.
-        st.table(combined.style.hide(axis="index").format({"Price": "{:g}"}))
+        st.table(combined.style.hide(axis="index").format({"Price": "{:g}", "Win %": "{:.1f}", "Loss %": "{:.1f}"}, na_rep="—"))
 
         _export_command_center_excel(combined)
 

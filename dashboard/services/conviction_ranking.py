@@ -47,6 +47,32 @@ def _lookup_key(column, why_text):
     return column
 
 
+def lookup_stats(column, why_text):
+    """
+    Returns {"win_rate", "loss_rate", "avg_return", "n"} for this
+    row's engine, or None if there's no backtest for it. Win/Loss is a
+    binary split (every simulated trade in the backtest resolved to
+    hit-target or hit-stop, no "still open" bucket) - this is that
+    engine's own historical hit rate, not a per-instance forecast for
+    this specific signal right now. Used to annotate every actionable
+    row (not just the "positive edge" subset rank() filters to), so
+    you can see the real track record even for engines that don't
+    make the Highest Conviction cut.
+    """
+
+    stats = WIN_RATE_LOOKUP.get(_lookup_key(column, why_text))
+
+    if stats is None:
+        return None
+
+    return {
+        "win_rate": stats["win_rate"],
+        "loss_rate": round(100 - stats["win_rate"], 1),
+        "avg_return": stats["avg_return"],
+        "n": stats["n"],
+    }
+
+
 def rank(rows, min_avg_return=0.0, top_n=10):
     """
     rows: the same row-dict shape _build_command_center_rows() already
