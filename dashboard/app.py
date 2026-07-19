@@ -22,15 +22,19 @@ import streamlit.components.v1 as components
 
 from analysis import fifteen_min_readiness
 from analysis.backtester import backtest_daily, backtest_reversal_playbook, backtest_rsi_divergence, backtest_rsi_wave, backtest_weekly, summarize_trades
+from analysis.market_regime import MarketRegimeEngine
 from analysis.reversal_playbook import ReversalPlaybook
 from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
 from analysis.rsi_divergence_strategy import RSIDivergenceStrategy
 from analysis.rsi_wave_strategy import RSIWaveStrategy
 from core.loader import AssetLoader
 from dashboard.services.alert_log import AlertLog
+from dashboard.services import conviction_ranking
 from dashboard.services.dashboard_loader import DashboardLoader
+from dashboard.services import economic_calendar
 from dashboard.services.fundamental_scan_service import FundamentalScanService
 from dashboard.services import fundamental_insights
+from dashboard.services import macro_news
 from dashboard.services.ticker_aliases import resolve_ticker
 from dashboard.services import trusted_ips
 from dashboard.services.reversal_status import ReversalStatusService
@@ -69,6 +73,8 @@ UNIVERSE_TABS = [
 UNIVERSE_REFRESH_SECONDS = 3600   # full stock/crypto universes are much bigger than Global Indices - a slow, once-an-hour cadence keeps yfinance usage sane (explicitly requested)
 
 EMA_PROXIMITY_REFRESH_SECONDS = 86400   # once a day, explicitly requested - Weekly/Monthly bars don't change intra-day anyway
+
+MACRO_NEWS_REFRESH_SECONDS = 1800   # news doesn't need to be second-fresh, and this is 6 extra yfinance calls every refresh
 
 
 def _format_duration(seconds):
@@ -2857,6 +2863,200 @@ def _command_center_timeframe(base_timeframe, why_text):
     return base_timeframe
 
 
+def _scan_macro_news_data():
+    """
+    Pure, background-thread-safe scan (no st.* calls) - see
+    dashboard/services/macro_news.py.
+    """
+
+    return {"headlines": macro_news.top_headlines(limit=10)}
+
+
+def _macro_value(df, ticker, column):
+
+    row = df[df["Ticker"] == ticker]
+
+    return row[column].iloc[0] if not row.empty else None
+
+
+def _render_market_regime(df):
+
+    vix_level = _macro_value(df, "^VIX", "Price")
+    vix_change = _macro_value(df, "^VIX", "Change %")
+    dxy_change = _macro_value(df, "DX-Y.NYB", "Change %")
+    y10_level = _macro_value(df, "^TNX", "Price")
+    y10_change = _macro_value(df, "^TNX", "Change %")
+    gold_change = _macro_value(df, "GC=F", "Change %")
+
+    index_rows = df[df["Sector"].astype(str).str.contains("Indices", na=False)]
+    breadth = (index_rows["Change %"] > 0).mean() * 100 if not index_rows.empty else None
+
+    regime = MarketRegimeEngine.classify(
+        vix_level=vix_level, vix_change_pct=vix_change,
+        dxy_change_pct=dxy_change,
+        yield10_level=y10_level, yield10_change_pct=y10_change,
+        gold_change_pct=gold_change,
+        breadth_pct=breadth,
+    )
+
+    st.markdown(f"### {regime['label']}")
+    st.caption("A real-time read of today's cross-asset moves using classic macro relationships - not a prediction, not backtested. See the 🎯 tab below for the actual validated, backtested signals.")
+
+    for factor in regime["factors"]:
+        st.write(f"- {factor}")
+
+
+def _render_key_levels(df):
+
+    st.markdown("**💵 Key Levels**")
+
+    levels = [
+        ("VIX", "^VIX", "Price"),
+        ("DXY", "DX-Y.NYB", "Price"),
+        ("Gold", "GC=F", "Price"),
+        ("Oil (WTI)", "CL=F", "Price"),
+        ("US 10Y", "^TNX", "Price"),
+        ("US 5Y", "^FVX", "Price"),
+    ]
+
+    cols = st.columns(len(levels))
+
+    for col, (label, ticker, price_col) in zip(cols, levels):
+
+        price = _macro_value(df, ticker, price_col)
+        change = _macro_value(df, ticker, "Change %")
+
+        with col:
+            if price is None:
+                st.metric(label, "—")
+            else:
+                unit = "%" if ticker in ("^TNX", "^FVX", "^IRX") else ""
+                st.metric(label, f"{price:g}{unit}", delta=f"{change:+.2f}%" if change is not None else None)
+
+
+def _render_macro_dashboard(df):
+
+    st.markdown("**📊 Macro Dashboard — Global Indices**")
+
+    index_rows = df[df["Sector"].astype(str).str.contains("Indices", na=False)]
+
+    if index_rows.empty:
+        st.caption("No index data yet.")
+        return
+
+    display = index_rows[["Sector", "Ticker", "Name", "Price", "Change %"]].sort_values(["Sector", "Change %"], ascending=[True, False])
+
+    st.dataframe(
+        display.style.format({"Change %": "{:+.2f}"}).map(Scanner.color_price, subset=["Change %"]),
+        use_container_width=True, hide_index=True, key="dmo_macro_dashboard",
+    )
+
+
+def _render_top_news():
+
+    st.markdown("**📰 Top News**")
+
+    cache_entry = universe_cache.get("macro_news")
+
+    if cache_entry is None or cache_entry["data"] is None:
+        st.info("Fetching headlines for the first time — check back shortly.")
+        return
+
+    headlines = cache_entry["data"]["headlines"]
+
+    if not headlines:
+        st.caption("No headlines available right now.")
+        return
+
+    for item in headlines:
+        title = item.get("title") or "(untitled)"
+        url = item.get("url")
+        publisher = item.get("publisher") or ""
+        if url:
+            st.markdown(f"- [{title}]({url}) — *{publisher}*")
+        else:
+            st.markdown(f"- {title} — *{publisher}*")
+
+
+def _render_economic_calendar():
+
+    st.markdown("**📅 Economic Calendar — Next 21 Days**")
+    st.caption("FOMC decisions, US CPI, and US Nonfarm Payrolls - the recurring events that reliably move every asset class here. From published Fed/BLS schedules, not a live feed.")
+
+    events = economic_calendar.upcoming(days=21)
+
+    if events.empty:
+        st.caption("Nothing in the next 21 days.")
+        return
+
+    st.dataframe(
+        events.assign(Date=events["Date"].dt.strftime("%b %d (%a)"))[["Date", "Event", "Importance", "Notes"]],
+        use_container_width=True, hide_index=True, key="dmo_econ_calendar",
+    )
+
+
+def _render_highest_conviction():
+
+    st.markdown("**🎯 Highest Conviction Trades**")
+    st.caption("Currently-actionable signals ranked by each engine's own backtested avg return per trade (not win rate alone - a high win rate with ~0% avg return isn't conviction). Only engines with a genuinely positive backtested edge are shown.")
+
+    rows, not_scanned = _build_command_center_rows()
+
+    if not_scanned:
+        st.info("Not yet scanned this session: " + ", ".join(not_scanned) + " — visit those tabs at least once to include them here.")
+
+    ranked = conviction_ranking.rank(rows)
+
+    if not ranked:
+        st.success("Nothing with a positive backtested edge is actionable right now.")
+        return
+
+    display = pd.DataFrame(ranked)[["Source", "Ticker", "Name", "Price", "Signal Type", "Signal", "Win Rate %", "Avg Return %", "Backtest N", "When"]]
+
+    st.table(display.style.hide(axis="index"))
+
+
+def render_daily_must_open_tab():
+    """
+    "Why is the market moving today" in under 30 seconds - the one
+    tab meant to be opened first, every morning, before anything else.
+    Everything here reads from already-cached scans (Global Indices'
+    background scan, Command Center's row-building, a background news
+    fetch) - no fresh live fetch blocks this tab's own load.
+    """
+
+    st.subheader("🌅 Daily Must Open")
+    st.caption("Market regime, macro readout, news, key levels, the economic calendar, and the highest-conviction trades - the morning briefing, all in one place.")
+
+    now = time.time()
+
+    news_entry = universe_cache.get("macro_news")
+    news_stale = news_entry is None or (not news_entry["loading"] and (now - news_entry["ts"]) >= MACRO_NEWS_REFRESH_SECONDS)
+    if news_stale:
+        universe_cache.start_scan("macro_news", _scan_macro_news_data, pool="macro_news")
+
+    global_market = st.session_state.get("global_market")
+
+    if global_market is None:
+        st.info("Global Indices hasn't been scanned yet this session - visit that tab once, then come back here.")
+    else:
+        df = global_market["df"]
+        _render_market_regime(df)
+        st.divider()
+        _render_key_levels(df)
+        st.divider()
+        _render_macro_dashboard(df)
+
+    st.divider()
+    _render_top_news()
+
+    st.divider()
+    _render_economic_calendar()
+
+    st.divider()
+    _render_highest_conviction()
+
+
 def _render_india_ema_watch():
     """
     Indian Stocks' buy/sell calls are deliberately left out of Command
@@ -2903,6 +3103,78 @@ def _render_india_ema_watch():
             near_monthly[["Ticker", "Name", "Monthly Dist %", "Monthly Side"]],
             use_container_width=True, hide_index=True, key="cc_india_ema_monthly",
         )
+
+
+def _build_command_center_rows():
+    """
+    Pure data-building step, no st.* calls - shared by Command Center's
+    own Best Found table and the Daily Must Open tab's conviction
+    ranking (both need "every currently-actionable row across the
+    scanned tabs", just presented differently). Returns (rows,
+    not_scanned) - rows is a list of dicts, not_scanned is the list of
+    source labels that haven't been scanned yet this session.
+    """
+
+    rows = []
+    not_scanned = []
+
+    for label, session_key in COMMAND_CENTER_BUYSELL_SOURCES:
+
+        market = st.session_state.get(session_key)
+
+        if market is None:
+            not_scanned.append(label)
+            continue
+
+        df = market["df"]
+
+        if df.empty:
+            continue
+
+        for column, full_col, ts_col, base_timeframe, keywords, style in COMMAND_CENTER_COLUMNS:
+
+            if column not in df.columns:
+                continue
+
+            # US/India don't get an Hourly view anywhere else in the
+            # app (not traded intraday) - skip their Hourly-sourced
+            # rows here too, even though the underlying columns still
+            # exist in their scanned dataframe. RSI Divergence is a
+            # deliberate exception for US Stocks (see
+            # COMMAND_CENTER_HOURLY_EXCEPTIONS) - Indian Stocks never
+            # has this column computed at all, so it's excluded
+            # naturally regardless of this check.
+            if base_timeframe == "Hourly" and session_key in ("us_market", "india_market") and column not in COMMAND_CENTER_HOURLY_EXCEPTIONS:
+                continue
+
+            mask = df[column].astype(str).str.lower().str.contains("|".join(keywords))
+
+            for _, row in df[mask].iterrows():
+
+                # Crypto is noisy across ~250 symbols of wildly varying
+                # quality/liquidity - same reasoning as the Telegram
+                # alerts, which already only fire for BTC.
+                if session_key == "crypto_market" and row["Ticker"] != CRYPTO_ALERT_TICKER:
+                    continue
+
+                why = row.get(full_col, "")
+
+                rows.append(
+                    {
+                        "Source": label,
+                        "Ticker": row["Ticker"],
+                        "Name": row["Name"],
+                        "Price": row.get("Price"),
+                        "Timeframe": _command_center_timeframe(base_timeframe, why),
+                        "Signal Type": column,
+                        "Style": style,
+                        "Signal": row[column],
+                        "When": row.get(ts_col, "—"),
+                        "Why": why,
+                    }
+                )
+
+    return rows, not_scanned
 
 
 def render_command_center_tab():
@@ -2968,64 +3240,7 @@ def _render_command_center_signals():
             else:
                 st.info(vix_note)
 
-    rows = []
-    not_scanned = []
-
-    for label, session_key in COMMAND_CENTER_BUYSELL_SOURCES:
-
-        market = st.session_state.get(session_key)
-
-        if market is None:
-            not_scanned.append(label)
-            continue
-
-        df = market["df"]
-
-        if df.empty:
-            continue
-
-        for column, full_col, ts_col, base_timeframe, keywords, style in COMMAND_CENTER_COLUMNS:
-
-            if column not in df.columns:
-                continue
-
-            # US/India don't get an Hourly view anywhere else in the
-            # app (not traded intraday) - skip their Hourly-sourced
-            # rows here too, even though the underlying columns still
-            # exist in their scanned dataframe. RSI Divergence is a
-            # deliberate exception for US Stocks (see
-            # COMMAND_CENTER_HOURLY_EXCEPTIONS) - Indian Stocks never
-            # has this column computed at all, so it's excluded
-            # naturally regardless of this check.
-            if base_timeframe == "Hourly" and session_key in ("us_market", "india_market") and column not in COMMAND_CENTER_HOURLY_EXCEPTIONS:
-                continue
-
-            mask = df[column].astype(str).str.lower().str.contains("|".join(keywords))
-
-            for _, row in df[mask].iterrows():
-
-                # Crypto is noisy across ~250 symbols of wildly varying
-                # quality/liquidity - same reasoning as the Telegram
-                # alerts, which already only fire for BTC.
-                if session_key == "crypto_market" and row["Ticker"] != CRYPTO_ALERT_TICKER:
-                    continue
-
-                why = row.get(full_col, "")
-
-                rows.append(
-                    {
-                        "Source": label,
-                        "Ticker": row["Ticker"],
-                        "Name": row["Name"],
-                        "Price": row.get("Price"),
-                        "Timeframe": _command_center_timeframe(base_timeframe, why),
-                        "Signal Type": column,
-                        "Style": style,
-                        "Signal": row[column],
-                        "When": row.get(ts_col, "—"),
-                        "Why": why,
-                    }
-                )
+    rows, not_scanned = _build_command_center_rows()
 
     if not_scanned:
         st.info("Not yet scanned this session: " + ", ".join(not_scanned) + " — visit those tabs at least once to include them here.")
@@ -3700,6 +3915,11 @@ def _warm_background_scans():
     if ema_stale:
         universe_cache.start_scan("ema_proximity", _scan_ema_proximity_data, pool="ema_proximity")
 
+    news_entry = universe_cache.get("macro_news")
+    news_stale = news_entry is None or (not news_entry["loading"] and (now - news_entry["ts"]) >= MACRO_NEWS_REFRESH_SECONDS)
+    if news_stale:
+        universe_cache.start_scan("macro_news", _scan_macro_news_data, pool="macro_news")
+
 
 EMA_PROXIMITY_SOURCE_LABELS = {"USA": "US Stocks", "India": "Indian Stocks", "Crypto": "Crypto", "Global": "Global Indices"}
 
@@ -3833,16 +4053,23 @@ def main():
             universe_cache.force_clear_all()
             st.toast("Cleared every cached scan - all tabs are starting fresh pulls now.", icon="🔄")
 
-    # Command Center first - a cross-tab summary of what's already been
-    # scanned. Global Indices second so it's still the first *live*
-    # tab a fresh session lands on. The old sidebar-driven "Scanner"
-    # tab was removed - its Setup/Reversal/Daily Reversal columns were
-    # never actually scanned (stale/fake), duplicating Command Center
-    # without the fix; its AI Score/chart/stock-details features had
-    # no unique value the four specialized tabs don't already cover.
-    tab_command, tab_weekly, tab_ema_watch, tab_notifications, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals, tab_fund_insights, tab_algo_test = st.tabs(
-        ["🎯 Command Center", "🗓 Weekly Report", "📍 200 EMA Watch", "🔔 Notifications", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals", "🧠 Fundamentals Insights", "🧪 Algo Test"]
+    # Daily Must Open first - the one tab meant to be opened before
+    # anything else each morning (regime, macro readout, news, key
+    # levels, calendar, highest-conviction trades in one place).
+    # Command Center second - a cross-tab summary of what's already
+    # been scanned. Global Indices third so it's still the first
+    # *live* tab a fresh session lands on. The old sidebar-driven
+    # "Scanner" tab was removed - its Setup/Reversal/Daily Reversal
+    # columns were never actually scanned (stale/fake), duplicating
+    # Command Center without the fix; its AI Score/chart/stock-details
+    # features had no unique value the four specialized tabs don't
+    # already cover.
+    tab_daily, tab_command, tab_weekly, tab_ema_watch, tab_notifications, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals, tab_fund_insights, tab_algo_test = st.tabs(
+        ["🌅 Daily Must Open", "🎯 Command Center", "🗓 Weekly Report", "📍 200 EMA Watch", "🔔 Notifications", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals", "🧠 Fundamentals Insights", "🧪 Algo Test"]
     )
+
+    with tab_daily:
+        render_daily_must_open_tab()
 
     with tab_command:
         render_command_center_tab()
