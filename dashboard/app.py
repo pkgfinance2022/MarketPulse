@@ -3014,7 +3014,7 @@ def _render_highest_conviction():
 
     display = pd.DataFrame(ranked)[["Source", "Ticker", "Name", "Price", "Signal Type", "Signal", "Win Rate %", "Avg Return %", "Backtest N", "When"]]
 
-    st.table(display.style.hide(axis="index").format({"Price": "{:g}"}))
+    st.table(display.style.hide(axis="index").format({"Price": "{:g}", "Win Rate %": "{:.1f}", "Avg Return %": "{:+.2f}"}))
 
 
 def render_daily_must_open_tab():
