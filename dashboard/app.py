@@ -42,6 +42,7 @@ from dashboard.services.reversal_status_daily import DailyReversalStatusService
 from analysis.ema_proximity import PROXIMITY_TOLERANCE_PCT
 from dashboard.services.ema_proximity_status import EMAProximityStatusService
 from dashboard.services.pattern_status import ChartPatternStatusService, PATTERN_STATE_LABELS
+from dashboard.services.performance_ranking_status import PerformanceRankingStatusService
 from dashboard.services.rsi_divergence_status import RSIDivergenceStatusService
 from dashboard.services.rsi_wave_status import RSIWaveStatusService
 from dashboard.services.stock_news_service import StockNewsService
@@ -2903,6 +2904,55 @@ def _render_macro_dashboard(df):
     )
 
 
+TOP_WORST_PERFORMERS_N = 10
+
+
+def _render_top_worst_performers():
+
+    st.markdown("**🏆 Top / Worst Performers — Week & Month**")
+    st.caption("Across all four sources (Global Indices, US Stocks, Indian Stocks, Crypto). Refreshes once a day - week/month returns don't meaningfully change intra-day.")
+
+    cache_entry = universe_cache.get("performance_ranking")
+
+    if cache_entry is None or cache_entry["data"] is None:
+        st.info("Scanning for the first time — check back shortly.")
+        return
+
+    rows = cache_entry["data"]["rows"]
+
+    if not rows:
+        st.caption("No performance data yet.")
+        return
+
+    df = pd.DataFrame(rows)
+
+    for label, column in [("Week", "Week %"), ("Month", "Month %")]:
+
+        col_df = df[df[column].notna()]
+
+        if col_df.empty:
+            continue
+
+        top = col_df.sort_values(column, ascending=False).head(TOP_WORST_PERFORMERS_N)
+        worst = col_df.sort_values(column, ascending=True).head(TOP_WORST_PERFORMERS_N)
+
+        left, right = st.columns(2)
+
+        with left:
+            st.markdown(f"**Top {label} Gainers**")
+            st.dataframe(
+                top[["Source", "Ticker", "Name", column]].style.format({column: "{:+.2f}"}).map(Scanner.color_price, subset=[column]),
+                use_container_width=True, hide_index=True, key=f"dmo_top_{label.lower()}",
+            )
+
+        with right:
+            st.markdown(f"**Worst {label} Losers**")
+            st.dataframe(
+                worst[["Source", "Ticker", "Name", column]].style.format({column: "{:+.2f}"}).map(Scanner.color_price, subset=[column]),
+                use_container_width=True, hide_index=True, key=f"dmo_worst_{label.lower()}",
+            )
+
+
 def _render_top_news():
 
     st.markdown("**📰 Top News**")
@@ -2986,6 +3036,11 @@ def render_daily_must_open_tab():
     if news_stale:
         universe_cache.start_scan("macro_news", _scan_macro_news_data, pool="macro_news")
 
+    perf_entry = universe_cache.get("performance_ranking")
+    perf_stale = perf_entry is None or (not perf_entry["loading"] and (now - perf_entry["ts"]) >= PERFORMANCE_RANKING_REFRESH_SECONDS)
+    if perf_stale:
+        universe_cache.start_scan("performance_ranking", _scan_performance_ranking_data, pool="performance_ranking")
+
     global_market = st.session_state.get("global_market")
 
     if global_market is None:
@@ -2997,6 +3052,9 @@ def render_daily_must_open_tab():
         _render_key_levels(df)
         st.divider()
         _render_macro_dashboard(df)
+
+    st.divider()
+    _render_top_worst_performers()
 
     st.divider()
     _render_top_news()
@@ -3816,6 +3874,11 @@ def _warm_background_scans():
     if news_stale:
         universe_cache.start_scan("macro_news", _scan_macro_news_data, pool="macro_news")
 
+    perf_entry = universe_cache.get("performance_ranking")
+    perf_stale = perf_entry is None or (not perf_entry["loading"] and (now - perf_entry["ts"]) >= PERFORMANCE_RANKING_REFRESH_SECONDS)
+    if perf_stale:
+        universe_cache.start_scan("performance_ranking", _scan_performance_ranking_data, pool="performance_ranking")
+
 
 EMA_PROXIMITY_SOURCE_LABELS = {"USA": "US Stocks", "India": "Indian Stocks", "Crypto": "Crypto", "Global": "Global Indices"}
 
@@ -3856,6 +3919,42 @@ def _scan_ema_proximity_data():
             "Monthly Dist %": monthly["distance_pct"] if monthly else None,
             "Monthly Near": monthly["near"] if monthly else False,
             "Monthly Side": monthly["side"] if monthly else None,
+        })
+
+    return {"rows": rows}
+
+
+PERFORMANCE_RANKING_REFRESH_SECONDS = 86400   # once a day - week/month returns don't meaningfully change intra-day
+
+
+def _scan_performance_ranking_data():
+    """
+    Pure, background-thread-safe scan (no st.* calls) - screens every
+    asset across all four sources for its week/month % return (see
+    analysis/performance_ranking.py). Stateless, same pattern as
+    _scan_ema_proximity_data.
+    """
+
+    assets = AssetLoader().all_assets()
+    name_map = {a.symbol: a.name for a in assets}
+    source_map = {a.symbol: a.country for a in assets}
+    symbols = list(name_map.keys())
+
+    states = PerformanceRankingStatusService.screen_states(symbols)
+
+    rows = []
+
+    for symbol, info in states.items():
+
+        if info.get("week_pct") is None and info.get("month_pct") is None:
+            continue
+
+        rows.append({
+            "Source": EMA_PROXIMITY_SOURCE_LABELS.get(source_map.get(symbol, ""), source_map.get(symbol, "")),
+            "Ticker": symbol,
+            "Name": name_map.get(symbol, symbol),
+            "Week %": info.get("week_pct"),
+            "Month %": info.get("month_pct"),
         })
 
     return {"rows": rows}
