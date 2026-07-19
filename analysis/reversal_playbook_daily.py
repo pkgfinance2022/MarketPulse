@@ -893,10 +893,25 @@ class DailyWeeklyReversalPlaybook:
                 )
 
         if last["weekly_path_c_forming"]:
+
+            # "Since when" for an ongoing condition, not a discrete
+            # event - walk back to the start of the current unbroken
+            # "forming" streak, same idea as RSI Wave's ALERT_LONG/
+            # ALERT_SHORT tracking last_event_bar["time"] instead of
+            # leaving a live, actionable-ish state with no timestamp
+            # at all (previously always None here, unlike every other
+            # engine's non-Watching states).
+            forming_start = last["time"]
+
+            for bar in reversed(trace):
+                if not bar["weekly_path_c_forming"]:
+                    break
+                forming_start = bar["time"]
+
             return (
                 f"🔵 Weekly Path C forming — Weekly RSI ({weekly_rsi}) holding 60-65 as support with price above the Weekly 200 EMA.",
                 "PATH_C_FORMING",
-                None,
+                forming_start,
             )
 
         return f"⚪ Watching — Weekly RSI {weekly_rsi}, no confluence active.", "WATCHING", None

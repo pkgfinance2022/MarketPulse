@@ -322,14 +322,6 @@ def check_for_new_entries():
 
     for entry in new_entries:
 
-        # Cross-session, cross-restart dedup - AlertLog's CSV is
-        # shared (unlike st.session_state), so this catches the same
-        # real signal getting independently re-detected by another
-        # open tab/session, or a restart resetting in-memory state,
-        # not just repeats within this one session's own memory.
-        if AlertLog.recently_logged(entry["ticker"], entry["direction"]):
-            continue
-
         icon = "🟢" if entry["direction"] == "LONG" else "🔴"
         price = round(entry["price"], 2) if entry["price"] is not None else "?"
         rsi = entry["rsi"] if entry["rsi"] is not None else "?"
@@ -341,6 +333,16 @@ def check_for_new_entries():
         full_status = RSIWaveStatusService.analyse(entry["ticker"], period="730d")
         stop_target = full_status["stop_target"] if full_status else None
         entry["stop_target"] = stop_target
+
+        # Atomic check-and-log - see AlertLog.claim_if_new(). Catches
+        # the same real signal getting independently re-detected by
+        # another open tab/session (shared CSV, not st.session_state),
+        # closing the race a plain check-then-log had.
+        if not AlertLog.claim_if_new(
+            entry["ticker"], entry["direction"], entry["name"], entry["price"], entry["rsi"], stop_target,
+            source="Global Indices", signal_type="RSI Wave",
+        ):
+            continue
 
         levels = (
             f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
@@ -358,19 +360,6 @@ def check_for_new_entries():
 
         if TelegramNotifier.is_configured():
             TelegramNotifier.send(message)
-
-        # Log every alert automatically so it can be checked later
-        # against what price actually did.
-        AlertLog.log_alert(
-            entry["ticker"],
-            entry["name"],
-            entry["direction"],
-            entry["price"],
-            entry["rsi"],
-            stop_target,
-            source="Global Indices",
-            signal_type="RSI Wave",
-        )
 
     render_notification_trigger(new_entries)
 
@@ -467,17 +456,21 @@ def check_for_new_reversal_signals():
 
     for signal in new_signals:
 
-        # Cross-session, cross-restart dedup - see check_for_new_entries().
-        if AlertLog.recently_logged(signal["ticker"], signal["direction"]):
+        full_status = ReversalStatusService.analyse(signal["ticker"])
+        stop_target = full_status["stop_target"] if full_status else None
+
+        # Atomic check-and-log - see AlertLog.claim_if_new() /
+        # check_for_new_entries().
+        if not AlertLog.claim_if_new(
+            signal["ticker"], signal["direction"], signal["name"], signal["price"], signal["rsi"], stop_target,
+            source="Global Indices", signal_type="Reversal 1H",
+        ):
             continue
 
         icon = "🟢" if signal["direction"] == "LONG" else "🔴"
         price = round(signal["price"], 2) if signal["price"] is not None else "?"
         signal_label = REVERSAL_SIGNAL_LABELS.get(signal["state"], signal["state"])
         event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
-
-        full_status = ReversalStatusService.analyse(signal["ticker"])
-        stop_target = full_status["stop_target"] if full_status else None
 
         levels = (
             f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
@@ -495,17 +488,6 @@ def check_for_new_reversal_signals():
 
         if TelegramNotifier.is_configured():
             TelegramNotifier.send(message)
-
-        AlertLog.log_alert(
-            signal["ticker"],
-            signal["name"],
-            signal["direction"],
-            signal["price"],
-            signal["rsi"],
-            stop_target,
-            source="Global Indices",
-            signal_type="Reversal 1H",
-        )
 
         browser_entries.append(
             {
@@ -568,17 +550,21 @@ def check_for_new_divergence_signals():
 
     for signal in new_signals:
 
-        # Cross-session, cross-restart dedup - see check_for_new_entries().
-        if AlertLog.recently_logged(signal["ticker"], signal["direction"]):
+        full_status = RSIDivergenceStatusService.analyse(signal["ticker"])
+        stop_target = full_status["stop_target"] if full_status else None
+
+        # Atomic check-and-log - see AlertLog.claim_if_new() /
+        # check_for_new_entries().
+        if not AlertLog.claim_if_new(
+            signal["ticker"], signal["direction"], signal["name"], signal["price"], signal["rsi"], stop_target,
+            source="Global Indices", signal_type="RSI Divergence",
+        ):
             continue
 
         icon = "🟢" if signal["direction"] == "LONG" else "🔴"
         price = round(signal["price"], 2) if signal["price"] is not None else "?"
         signal_label = DIVERGENCE_SIGNAL_LABELS.get(signal["state"], signal["state"])
         event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
-
-        full_status = RSIDivergenceStatusService.analyse(signal["ticker"])
-        stop_target = full_status["stop_target"] if full_status else None
 
         levels = (
             f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
@@ -596,17 +582,6 @@ def check_for_new_divergence_signals():
 
         if TelegramNotifier.is_configured():
             TelegramNotifier.send(message)
-
-        AlertLog.log_alert(
-            signal["ticker"],
-            signal["name"],
-            signal["direction"],
-            signal["price"],
-            signal["rsi"],
-            stop_target,
-            source="Global Indices",
-            signal_type="RSI Divergence",
-        )
 
         browser_entries.append(
             {
@@ -668,16 +643,23 @@ def check_for_new_pattern_signals():
 
     for signal in new_signals:
 
-        # Cross-session, cross-restart dedup - see check_for_new_entries().
-        if AlertLog.recently_logged(signal["ticker"], "LONG"):
-            continue
-
-        price = round(signal["price"], 4) if signal["price"] is not None else "?"
         signal_label = PATTERN_STATE_LABELS.get(signal["state"], signal["state"])
-        event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
 
         full_status = ChartPatternStatusService.analyse(signal["ticker"])
         stop_target = full_status["stop_target"] if full_status else None
+
+        # Atomic check-and-log - see AlertLog.claim_if_new() /
+        # check_for_new_entries(). This is the exact path that produced
+        # duplicate Telegram alerts in production (same signal, two
+        # near-simultaneous sends) before the race was closed here.
+        if not AlertLog.claim_if_new(
+            signal["ticker"], "LONG", signal["name"], signal["price"], None, stop_target,
+            source="Global Indices", signal_type=signal_label.split(" — ")[0].replace("🟢 ", ""),
+        ):
+            continue
+
+        price = round(signal["price"], 4) if signal["price"] is not None else "?"
+        event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
 
         levels = (
             f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
@@ -695,17 +677,6 @@ def check_for_new_pattern_signals():
 
         if TelegramNotifier.is_configured():
             TelegramNotifier.send(message)
-
-        AlertLog.log_alert(
-            signal["ticker"],
-            signal["name"],
-            "LONG",
-            signal["price"],
-            None,
-            stop_target,
-            source="Global Indices",
-            signal_type=signal_label.split(" — ")[0].replace("🟢 ", ""),
-        )
 
         browser_entries.append(
             {
@@ -762,6 +733,14 @@ def _scan_global_indices_data(sector):
         }
     )
 
+    # See the identical guard in _scan_universe_data - a real region
+    # filter should never legitimately come back empty; an empty
+    # result means every fetch failed (transient), not a genuinely
+    # empty universe. Raising preserves the last good cached result
+    # instead of blanking it.
+    if df.empty:
+        raise RuntimeError(f"Global Indices scan for sector={sector} returned zero rows (failed={failed}) - treating as a transient failure, not a real empty universe.")
+
     wave_states = {}
     reversal_states = {}
 
@@ -774,7 +753,15 @@ def _scan_global_indices_data(sector):
         # of an eyeballed guess.
         df["Volatility %"] = (df["ATR"] / df["Price"] * 100).replace([float("inf"), -float("inf")], None)
 
-        tickers = df["Ticker"].tolist()
+        # US Rates (^TNX/^FVX/^IRX - added for the Daily Must Open
+        # regime read, see analysis/market_regime.py) are yield levels,
+        # not tradeable price series - running Setup/Reversal/Chart
+        # Patterns/etc. on them produces nonsense ("Piercing Pattern"
+        # on a bond yield has no meaning) and, worse, fires real
+        # Telegram alerts on it. Screened out of every signal engine
+        # below; Price/Change %/Status still populate normally via the
+        # unfiltered `df` above, which is all the regime read needs.
+        tickers = df[df["Sector"] != "US Rates"]["Ticker"].tolist()
 
         wave_states = RSIWaveStatusService.screen_states(tickers)
         wave_labels = {t: RSIWaveStrategy.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in wave_states.items()}
@@ -1913,6 +1900,17 @@ def _scan_universe_data(country):
         }
     )
 
+    # A real universe (country="All" filter) should never legitimately
+    # come back empty - if it does, every fetch failed (a transient
+    # yfinance rate-limit/network blip, the actual cause seen in
+    # production), not a genuinely empty result. Raising here (instead
+    # of caching the empty df) lets universe_cache.start_scan's own
+    # exception handling keep whatever good result was cached before,
+    # rather than blanking "No assets found" over it until the next
+    # scan happens to succeed.
+    if df.empty:
+        raise RuntimeError(f"Universe scan for {country} returned zero rows (failed={failed}) - treating as a transient failure, not a real empty universe.")
+
     wave_states = {}
     reversal_states = {}
     daily_reversal_states = {}
@@ -2016,17 +2014,21 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
 
         for entry in new_entries:
 
-            # Cross-session, cross-restart dedup - see check_for_new_entries().
-            if AlertLog.recently_logged(entry["ticker"], entry["direction"]):
+            full_status = RSIWaveStatusService.analyse(entry["ticker"], period="730d")
+            stop_target = full_status["stop_target"] if full_status else None
+
+            # Atomic check-and-log - see AlertLog.claim_if_new() /
+            # check_for_new_entries().
+            if not AlertLog.claim_if_new(
+                entry["ticker"], entry["direction"], entry["name"], entry["price"], entry["rsi"], stop_target,
+                source=PREFIX_SOURCE_LABELS[prefix], signal_type="RSI Wave",
+            ):
                 continue
 
             icon = "🟢" if entry["direction"] == "LONG" else "🔴"
             price = round(entry["price"], 2) if entry["price"] is not None else "?"
             rsi = entry["rsi"] if entry["rsi"] is not None else "?"
             event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
-
-            full_status = RSIWaveStatusService.analyse(entry["ticker"], period="730d")
-            stop_target = full_status["stop_target"] if full_status else None
 
             levels = (
                 f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
@@ -2042,11 +2044,6 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
                     f"{icon} {entry['name']} ({entry['ticker']}) — {entry['direction']} entry (RSI Wave)\n"
                     f"{event_time}\nPrice {price} · RSI {rsi}{levels}\n{description}"
                 )
-
-            AlertLog.log_alert(
-                entry["ticker"], entry["name"], entry["direction"], entry["price"], entry["rsi"], stop_target,
-                source=PREFIX_SOURCE_LABELS[prefix], signal_type="RSI Wave",
-            )
 
         previous_reversal = st.session_state[f"{prefix}_reversal_states"]
         is_first_reversal_check = not st.session_state[f"{prefix}_reversal_states_seeded"]
@@ -2072,8 +2069,15 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
 
         for signal in new_signals:
 
-            # Cross-session, cross-restart dedup - see check_for_new_entries().
-            if AlertLog.recently_logged(signal["ticker"], signal["direction"]):
+            full_status = ReversalStatusService.analyse(signal["ticker"])
+            stop_target = full_status["stop_target"] if full_status else None
+
+            # Atomic check-and-log - see AlertLog.claim_if_new() /
+            # check_for_new_entries().
+            if not AlertLog.claim_if_new(
+                signal["ticker"], signal["direction"], signal["name"], signal["price"], signal["rsi"], stop_target,
+                source=PREFIX_SOURCE_LABELS[prefix], signal_type="Reversal 1H",
+            ):
                 continue
 
             icon = "🟢" if signal["direction"] == "LONG" else "🔴"
@@ -2081,9 +2085,6 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
             price = round(signal["price"], 2) if signal["price"] is not None else "?"
             rsi = signal["rsi"] if signal["rsi"] is not None else "?"
             event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
-
-            full_status = ReversalStatusService.analyse(signal["ticker"])
-            stop_target = full_status["stop_target"] if full_status else None
 
             levels = (
                 f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
@@ -2099,11 +2100,6 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
                     f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (Reversal Playbook)\n"
                     f"{event_time}\nPrice {price} · RSI {rsi}{levels}\n{description}"
                 )
-
-            AlertLog.log_alert(
-                signal["ticker"], signal["name"], signal["direction"], signal["price"], signal["rsi"], stop_target,
-                source=PREFIX_SOURCE_LABELS[prefix], signal_type="Reversal 1H",
-            )
 
     previous_daily = st.session_state[f"{prefix}_daily_reversal_states"]
     is_first_daily_check = not st.session_state[f"{prefix}_daily_reversal_states_seeded"]
@@ -2129,8 +2125,15 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
 
     for signal in new_daily_signals:
 
-        # Cross-session, cross-restart dedup - see check_for_new_entries().
-        if AlertLog.recently_logged(signal["ticker"], signal["direction"]):
+        full_status = DailyReversalStatusService.analyse(signal["ticker"])
+        stop_target = full_status["stop_target"] if full_status else None
+
+        # Atomic check-and-log - see AlertLog.claim_if_new() /
+        # check_for_new_entries().
+        if not AlertLog.claim_if_new(
+            signal["ticker"], signal["direction"], signal["name"], signal["price"], signal["rsi"], stop_target,
+            source=PREFIX_SOURCE_LABELS[prefix], signal_type="Daily Reversal",
+        ):
             continue
 
         icon = "🟢" if signal["direction"] == "LONG" else "🔴"
@@ -2138,9 +2141,6 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
         price = round(signal["price"], 2) if signal["price"] is not None else "?"
         rsi = signal["rsi"] if signal["rsi"] is not None else "?"
         event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
-
-        full_status = DailyReversalStatusService.analyse(signal["ticker"])
-        stop_target = full_status["stop_target"] if full_status else None
 
         levels = (
             f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
@@ -2156,11 +2156,6 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
                 f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (Daily)\n"
                 f"{event_time}\nPrice {price} · RSI {rsi}{levels}\n{description}"
             )
-
-        AlertLog.log_alert(
-            signal["ticker"], signal["name"], signal["direction"], signal["price"], signal["rsi"], stop_target,
-            source=PREFIX_SOURCE_LABELS[prefix], signal_type="Daily Reversal",
-        )
 
     new_weekly_signals = (
         []
@@ -2184,7 +2179,12 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
     for signal in new_weekly_signals:
 
         # Weekly confluence is LONG-only - see WEEKLY_SIGNAL_LABELS.
-        if AlertLog.recently_logged(signal["ticker"], "LONG"):
+        # Atomic check-and-log - see AlertLog.claim_if_new() /
+        # check_for_new_entries().
+        if not AlertLog.claim_if_new(
+            signal["ticker"], "LONG", signal["name"], signal["price"], signal["rsi"], None,
+            source=PREFIX_SOURCE_LABELS[prefix], signal_type="Weekly Confluence",
+        ):
             continue
 
         signal_label = WEEKLY_SIGNAL_LABELS[signal["state"]]
@@ -2199,11 +2199,6 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
                 f"🟢 {signal['name']} ({signal['ticker']}) — {signal_label} (Weekly)\n"
                 f"{event_time}\nPrice {price} · RSI {rsi}\n{signal['description']}"
             )
-
-        AlertLog.log_alert(
-            signal["ticker"], signal["name"], "LONG", signal["price"], signal["rsi"], None,
-            source=PREFIX_SOURCE_LABELS[prefix], signal_type="Weekly Confluence",
-        )
 
     if prefix == "us":
 
@@ -2230,8 +2225,15 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
 
         for signal in new_divergence_signals:
 
-            # Cross-session, cross-restart dedup - see check_for_new_entries().
-            if AlertLog.recently_logged(signal["ticker"], signal["direction"]):
+            full_status = RSIDivergenceStatusService.analyse(signal["ticker"])
+            stop_target = full_status["stop_target"] if full_status else None
+
+            # Atomic check-and-log - see AlertLog.claim_if_new() /
+            # check_for_new_entries().
+            if not AlertLog.claim_if_new(
+                signal["ticker"], signal["direction"], signal["name"], signal["price"], signal["rsi"], stop_target,
+                source="US Stocks", signal_type="RSI Divergence",
+            ):
                 continue
 
             icon = "🟢" if signal["direction"] == "LONG" else "🔴"
@@ -2239,9 +2241,6 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
             price = round(signal["price"], 2) if signal["price"] is not None else "?"
             rsi = signal["rsi"] if signal["rsi"] is not None else "?"
             event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
-
-            full_status = RSIDivergenceStatusService.analyse(signal["ticker"])
-            stop_target = full_status["stop_target"] if full_status else None
 
             levels = (
                 f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
@@ -2257,11 +2256,6 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
                     f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (RSI Divergence)\n"
                     f"{event_time}\nPrice {price} · RSI {rsi}{levels}\n{description}"
                 )
-
-            AlertLog.log_alert(
-                signal["ticker"], signal["name"], signal["direction"], signal["price"], signal["rsi"], stop_target,
-                source="US Stocks", signal_type="RSI Divergence",
-            )
 
 
 UNIVERSE_POLL_SECONDS = 20   # how often the page checks whether a background scan finished - cheap (just a dict read, no network), so this can be much shorter than the hourly rescan cadence itself
@@ -2652,10 +2646,10 @@ COMMAND_CENTER_SOURCES = [
 # Indian Stocks' buy/sell calls are deliberately excluded from Command
 # Center's aggregated tables (not from the Indian Stocks tab itself,
 # which is untouched) - per explicit instruction, not a call the user
-# ever intends to act on from here. India's 200 EMA Watch proximity
-# hits are shown instead (see _render_india_ema_watch below) - a
-# manual-review flag, not a trade call, which is the kind of India
-# signal actually wanted in this view.
+# ever intends to act on from here. 200 EMA proximity is a better fit
+# for that tickers-worth-a-look need (already covers India/US/Crypto/
+# Global in one place) - see the 📍 200 EMA Watch tab, not duplicated
+# here in Command Center.
 COMMAND_CENTER_BUYSELL_SOURCES = [(label, key) for label, key in COMMAND_CENTER_SOURCES if key != "india_market"]
 
 COMMAND_CENTER_COLUMNS = [
@@ -2947,7 +2941,7 @@ def _render_macro_dashboard(df):
     display = index_rows[["Sector", "Ticker", "Name", "Price", "Change %"]].sort_values(["Sector", "Change %"], ascending=[True, False])
 
     st.dataframe(
-        display.style.format({"Change %": "{:+.2f}"}).map(Scanner.color_price, subset=["Change %"]),
+        display.style.format({"Price": "{:g}", "Change %": "{:+.2f}"}).map(Scanner.color_price, subset=["Change %"]),
         use_container_width=True, hide_index=True, key="dmo_macro_dashboard",
     )
 
@@ -3013,7 +3007,7 @@ def _render_highest_conviction():
 
     display = pd.DataFrame(ranked)[["Source", "Ticker", "Name", "Price", "Signal Type", "Signal", "Win Rate %", "Avg Return %", "Backtest N", "When"]]
 
-    st.table(display.style.hide(axis="index"))
+    st.table(display.style.hide(axis="index").format({"Price": "{:g}"}))
 
 
 def render_daily_must_open_tab():
@@ -3055,54 +3049,6 @@ def render_daily_must_open_tab():
 
     st.divider()
     _render_highest_conviction()
-
-
-def _render_india_ema_watch():
-    """
-    Indian Stocks' buy/sell calls are deliberately left out of Command
-    Center (see COMMAND_CENTER_BUYSELL_SOURCES) - shown here instead:
-    which Indian tickers are currently near their Weekly 200 EMA /
-    Monthly 50 EMA (see analysis/ema_proximity.py), a manual-review
-    flag rather than a trade call. Reads the same "ema_proximity"
-    cache the 200 EMA Watch tab uses - no extra scan of its own.
-    """
-
-    cache_entry = universe_cache.get("ema_proximity")
-
-    if cache_entry is None or cache_entry["data"] is None:
-        return
-
-    rows = cache_entry["data"]["rows"]
-
-    if not rows:
-        return
-
-    df = pd.DataFrame(rows)
-    india_df = df[df["Source"] == "Indian Stocks"]
-
-    near_weekly = india_df[india_df["Weekly Near"]].sort_values("Weekly Dist %", key=lambda s: s.abs())
-    near_monthly = india_df[india_df["Monthly Near"]].sort_values("Monthly Dist %", key=lambda s: s.abs())
-
-    if near_weekly.empty and near_monthly.empty:
-        return
-
-    st.divider()
-    st.subheader("📍 Indian Stocks — Near 200 EMA")
-    st.caption("Not a trade call - just flags Indian tickers currently trading close to a major long-term trend line. See the 200 EMA Watch tab for the full picture across all sources.")
-
-    if not near_weekly.empty:
-        st.markdown(f"**Near Weekly 200 EMA** ({len(near_weekly)})")
-        st.dataframe(
-            near_weekly[["Ticker", "Name", "Weekly Dist %", "Weekly Side"]],
-            use_container_width=True, hide_index=True, key="cc_india_ema_weekly",
-        )
-
-    if not near_monthly.empty:
-        st.markdown(f"**Near Monthly 50 EMA** ({len(near_monthly)})")
-        st.dataframe(
-            near_monthly[["Ticker", "Name", "Monthly Dist %", "Monthly Side"]],
-            use_container_width=True, hide_index=True, key="cc_india_ema_monthly",
-        )
 
 
 def _build_command_center_rows():
@@ -3273,14 +3219,18 @@ def _render_command_center_signals():
         # renders a plain HTML table instead, which wraps naturally and
         # grows each row's height to fit - a taller table is an
         # accepted tradeoff for actually being able to read the text.
-        st.table(combined.style.hide(axis="index"))
+        #
+        # Explicit Price format needed here even though the underlying
+        # value is already rounded (see DashboardLoader._price_round) -
+        # pandas Styler's own default float precision (6 decimals) pads
+        # a clean 58576.0 into "58576.000000" regardless of the real
+        # value unless a column format is given.
+        st.table(combined.style.hide(axis="index").format({"Price": "{:g}"}))
 
         _export_command_center_excel(combined)
 
     else:
         st.success("Nothing actionable right now across the tabs scanned so far.")
-
-    _render_india_ema_watch()
 
     # Deliberately NOT gated behind "rows" above (an early return here
     # used to skip everything below whenever there was nothing in the

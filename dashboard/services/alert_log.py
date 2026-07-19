@@ -13,6 +13,7 @@ persistence convention. Gitignored (user-generated runtime data, not
 source).
 """
 
+import threading
 from pathlib import Path
 
 import pandas as pd
@@ -21,6 +22,19 @@ from dashboard.services.time_utils import now_cet
 from providers.yahoo import YahooProvider
 
 LOG_PATH = Path(__file__).resolve().parent.parent.parent / "database" / "alert_log.csv"
+
+# Guards the recently_logged()-then-log_alert() sequence in
+# claim_if_new() below. Multiple Streamlit sessions (e.g. two open
+# browser tabs) run as separate threads within the SAME server
+# process, so a plain in-process lock is enough to close the race:
+# without it, two sessions' fragments ticking within the same second
+# could both call recently_logged(), both see "not logged yet" (since
+# neither has written to the CSV yet), and both send a real Telegram
+# alert for the same signal - confirmed as the actual cause of
+# duplicate alerts seen in production. Doesn't (and can't) cover the
+# separate GitHub Actions scanner process, which writes to its own
+# file entirely (see class docstring).
+_claim_lock = threading.Lock()
 
 COLUMNS = [
     "Timestamp",
@@ -111,6 +125,29 @@ class AlertLog:
             return False
 
         return (now_cet().replace(tzinfo=None) - last_logged).total_seconds() < within_minutes * 60
+
+    @classmethod
+    def claim_if_new(cls, ticker, direction, name, entry_price, rsi, stop_target, source="Unknown", signal_type="Unknown", within_minutes=60, path=None):
+        """
+        Atomically checks recently_logged() and, if not already
+        logged, immediately logs the alert - both under one lock, so
+        two near-simultaneous callers (two open browser tabs both
+        independently detecting the same real signal in the same
+        fragment tick) can't both pass the check before either has
+        actually written the log entry. Returns True if this call
+        "won" the claim (the caller should go on to actually send the
+        Telegram/toast alert), False if another caller already claimed
+        it (the caller should skip sending - already handled).
+        """
+
+        with _claim_lock:
+
+            if cls.recently_logged(ticker, direction, within_minutes=within_minutes, path=path):
+                return False
+
+            cls.log_alert(ticker, name, direction, entry_price, rsi, stop_target, source=source, signal_type=signal_type, path=path)
+
+            return True
 
     @classmethod
     def log_alert(cls, ticker, name, direction, entry_price, rsi, stop_target, source="Unknown", signal_type="Unknown", path=None):
