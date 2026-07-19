@@ -1033,7 +1033,7 @@ def render_global_indices_live():
     df = DashboardLoader.refresh_intraday_prices(market["df"])
     st.session_state.global_market["df"] = df
 
-    st.caption("🔴 Live — refreshes every 45s (scanner: 15m bars · pullback setup: 1H). For the VIX/regime risk read, see 🌅 Daily Must Open.")
+    st.caption("🔴 Live — refreshes every 45s (scanner: 15m bars · pullback setup: 1H). For the VIX/regime risk read, see the CEO Summary above or 🌍 Macro.")
 
     # "Where did 65 just get crossed" - a quick at-a-glance highlight,
     # since that's often where the real move starts. Reuses the
@@ -3130,24 +3130,22 @@ def _render_highest_conviction():
     st.table(display.style.hide(axis="index").format({"Price": "{:g}", "Win Rate %": "{:.1f}", "Avg Return %": "{:+.2f}"}))
 
 
-def render_daily_must_open_tab():
+def render_macro_tab():
     """
-    "Why is the market moving today" in under 30 seconds - the one
-    tab meant to be opened first, every morning, before anything else.
-    Everything here reads from already-cached scans (Global Indices'
-    background scan, Command Center's row-building, a background news
-    fetch) - no fresh live fetch blocks this tab's own load.
+    "Why is the market moving today" in under 30 seconds - regime,
+    key levels, macro readout, cross-asset context, performers, and
+    the 200 EMA long-term watchlist. News/Calendar/Highest Conviction
+    moved to their own tabs (📰 News, 📅 Calendar, 📋 Overview) as part
+    of the 13->8 tab reorganization - this tab is purely the macro/
+    regime read now. Everything here reads from already-cached scans
+    (Global Indices' background scan) - no fresh live fetch blocks
+    this tab's own load.
     """
 
-    st.subheader("🌅 Daily Must Open")
-    st.caption("Market regime, macro readout, news, key levels, the economic calendar, and the highest-conviction trades - the morning briefing, all in one place.")
+    st.subheader("🌍 Macro")
+    st.caption("Market regime, key levels, macro readout, cross-asset context, and performers - the macro picture, all in one place.")
 
     now = time.time()
-
-    news_entry = universe_cache.get("macro_news")
-    news_stale = news_entry is None or (not news_entry["loading"] and (now - news_entry["ts"]) >= MACRO_NEWS_REFRESH_SECONDS)
-    if news_stale:
-        universe_cache.start_scan("macro_news", _scan_macro_news_data, pool="macro_news")
 
     perf_entry = universe_cache.get("performance_ranking")
     perf_stale = perf_entry is None or (not perf_entry["loading"] and (now - perf_entry["ts"]) >= PERFORMANCE_RANKING_REFRESH_SECONDS)
@@ -3177,13 +3175,85 @@ def render_daily_must_open_tab():
     _render_top_worst_performers()
 
     st.divider()
+    render_ema_proximity_tab()
+
+
+def render_news_tab():
+
+    now = time.time()
+
+    news_entry = universe_cache.get("macro_news")
+    news_stale = news_entry is None or (not news_entry["loading"] and (now - news_entry["ts"]) >= MACRO_NEWS_REFRESH_SECONDS)
+    if news_stale:
+        universe_cache.start_scan("macro_news", _scan_macro_news_data, pool="macro_news")
+
     _render_top_news()
 
-    st.divider()
+
+def render_calendar_tab():
+
     _render_economic_calendar()
 
+
+OVERVIEW_SECTIONS = ["🎯 Command Center", "🔥 Highest Conviction", "🔔 Notifications", "🗓 Weekly Report"]
+
+
+def render_overview_tab():
+    """
+    Every "what's actionable / what already happened" view in one tab,
+    switched via a sub-selector rather than one long scroll - Command
+    Center's Best Found/Everything Found/Movers, the ranked Highest
+    Conviction picks, the Notifications feed + Alert Tracking, and the
+    7-day Weekly Report digest.
+    """
+
+    section = st.radio("View", OVERVIEW_SECTIONS, horizontal=True, key="overview_section")
     st.divider()
-    _render_highest_conviction()
+
+    if section == "🎯 Command Center":
+        render_command_center_tab()
+    elif section == "🔥 Highest Conviction":
+        _render_highest_conviction()
+    elif section == "🔔 Notifications":
+        render_notifications_tab()
+    else:
+        render_weekly_report_tab()
+
+
+def render_markets_tab(meta):
+
+    render_global_indices_tab(meta)
+
+
+def render_industries_tab():
+
+    render_market_360_tab()
+
+
+STOCKS_SECTIONS = ["🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "💰 Fundamentals", "🧠 Fundamentals Insights", "🧪 Algo Test"]
+
+
+def render_stocks_tab():
+    """
+    Every individual-equity view in one tab, switched via a
+    sub-selector - US/India's own Hourly-excluded Daily+Weekly tables,
+    the on-demand Fundamental scanner, the passive weekly Fundamentals
+    Insights briefing, and Algo Test's "check any symbol" utility.
+    """
+
+    section = st.radio("View", STOCKS_SECTIONS, horizontal=True, key="stocks_section")
+    st.divider()
+
+    if section == "🇺🇸 US Stocks":
+        render_universe_tab("us", "USA", "🇺🇸 US Stocks")
+    elif section == "🇮🇳 Indian Stocks":
+        render_universe_tab("india", "India", "🇮🇳 Indian Stocks")
+    elif section == "💰 Fundamentals":
+        render_fundamentals_tab()
+    elif section == "🧠 Fundamentals Insights":
+        render_fundamental_insights_tab()
+    else:
+        render_algo_test_tab()
 
 
 def _build_command_center_rows():
@@ -3307,7 +3377,7 @@ def _render_command_center_signals():
         "Aggregates every actionable signal already sitting in Global Indices, US Stocks, Indian Stocks, and "
         "Crypto - reads each tab's cached scan, doesn't trigger any new fetches. Updates itself automatically "
         "as each tab's background scan completes - no need to visit them first. For the VIX/regime risk read, "
-        "see 🌅 Daily Must Open."
+        "see the CEO Summary above or 🌍 Macro."
     )
 
     rows, not_scanned = _build_command_center_rows()
@@ -3531,18 +3601,18 @@ def _build_market_360_data():
 
 def render_market_360_tab():
     """
-    Visual companion to 🌅 Daily Must Open - that tab is text/table
-    based for a fast scan; this one is chart-only, for a slower "what's
-    actually hot or cold across the whole universe" look. Reads the
-    same already-cached session state every other tab does - no fetch
-    of its own.
+    Visual companion to 🌍 Macro - that tab is text/table based for a
+    fast scan; this one is chart-only, for a slower "what's actually
+    hot or cold across the whole universe" look. Reads the same
+    already-cached universe_cache data every other tab does - no
+    fetch of its own.
     """
 
     st.subheader("📊 Market 360 — Heatmap")
     st.caption(
         "Every scanned asset, grouped by source and sector, colored by today's % change - the fastest "
         "visual read of what's hot and what's not. Box size is uniform (not weighted by market cap). "
-        "For the text/table morning briefing, see 🌅 Daily Must Open."
+        "For the text/table macro readout, see 🌍 Macro."
     )
 
     df, not_scanned = _build_market_360_data()
@@ -4454,59 +4524,43 @@ def main():
             universe_cache.force_clear_all()
             st.toast("Cleared every cached scan - all tabs are starting fresh pulls now.", icon="🔄")
 
-    # Daily Must Open first - the one tab meant to be opened before
-    # anything else each morning (regime, macro readout, news, key
-    # levels, calendar, highest-conviction trades in one place).
-    # Command Center second - a cross-tab summary of what's already
-    # been scanned. Global Indices third so it's still the first
-    # *live* tab a fresh session lands on. The old sidebar-driven
-    # "Scanner" tab was removed - its Setup/Reversal/Daily Reversal
-    # columns were never actually scanned (stale/fake), duplicating
-    # Command Center without the fix; its AI Score/chart/stock-details
-    # features had no unique value the four specialized tabs don't
-    # already cover.
-    tab_daily, tab_360, tab_command, tab_weekly, tab_ema_watch, tab_notifications, tab_global, tab_us, tab_india, tab_crypto, tab_fundamentals, tab_fund_insights, tab_algo_test = st.tabs(
-        ["🌅 Daily Must Open", "📊 Market 360", "🎯 Command Center", "🗓 Weekly Report", "📍 200 EMA Watch", "🔔 Notifications", "🌍 Global Indices", "🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "🪙 Crypto", "💰 Fundamentals", "🧠 Fundamentals Insights", "🧪 Algo Test"]
+    # Reorganized from 13 tabs down to 8 (explicit request) - each of
+    # the old tabs still exists as a function, just recomposed into a
+    # broader group (some behind an in-tab sub-selector) instead of
+    # its own top-level tab, so navigation doesn't require scrolling
+    # through an ever-growing top-level tab bar. Overview first
+    # (what's actionable / already fired), Macro second (why the
+    # market's moving), Markets third so it's still the first *live*
+    # tab in the group. The CEO Summary above already covers the
+    # "5 second decision" need - these tabs are for the follow-up
+    # detail once you've scrolled past it.
+    tab_overview, tab_macro, tab_markets, tab_news, tab_calendar, tab_stocks, tab_crypto, tab_industries = st.tabs(
+        ["📋 Overview", "🌍 Macro", "📈 Markets", "📰 News", "📅 Calendar", "📊 Stocks", "🪙 Crypto", "🏭 Industries"]
     )
 
-    with tab_daily:
-        render_daily_must_open_tab()
+    with tab_overview:
+        render_overview_tab()
 
-    with tab_360:
-        render_market_360_tab()
+    with tab_macro:
+        render_macro_tab()
 
-    with tab_command:
-        render_command_center_tab()
+    with tab_markets:
+        render_markets_tab(meta)
 
-    with tab_weekly:
-        render_weekly_report_tab()
+    with tab_news:
+        render_news_tab()
 
-    with tab_ema_watch:
-        render_ema_proximity_tab()
+    with tab_calendar:
+        render_calendar_tab()
 
-    with tab_notifications:
-        render_notifications_tab()
-
-    with tab_global:
-        render_global_indices_tab(meta)
-
-    with tab_us:
-        render_universe_tab("us", "USA", "🇺🇸 US Stocks")
-
-    with tab_india:
-        render_universe_tab("india", "India", "🇮🇳 Indian Stocks")
+    with tab_stocks:
+        render_stocks_tab()
 
     with tab_crypto:
         render_universe_tab("crypto", "Crypto", "🪙 Crypto")
 
-    with tab_fundamentals:
-        render_fundamentals_tab()
-
-    with tab_fund_insights:
-        render_fundamental_insights_tab()
-
-    with tab_algo_test:
-        render_algo_test_tab()
+    with tab_industries:
+        render_industries_tab()
 
 
 if __name__ == "__main__":
