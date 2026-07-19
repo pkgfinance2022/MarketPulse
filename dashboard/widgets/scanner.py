@@ -38,6 +38,29 @@ class Scanner:
         return ""
 
     @staticmethod
+    def color_bias(v):
+        """
+        For the standardized 🟢 Bullish / 🟡 Neutral / 🔴 Bearish badge
+        (see app.py's _signal_bias) - a fixed 3-value vocabulary, so
+        this can be a simple lookup rather than the column-specific
+        text parsing color_setup/color_reversal need for their own
+        much wider label vocabularies.
+        """
+
+        if pd.isna(v):
+            return ""
+
+        v = str(v)
+
+        if "Bullish" in v:
+            return "background-color:#92d050;font-weight:bold;"
+
+        if "Bearish" in v:
+            return "background-color:#ff8080;font-weight:bold;"
+
+        return "background-color:#e0e0e0;"
+
+    @staticmethod
     def color_signal(v):
 
         if pd.isna(v):

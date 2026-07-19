@@ -3158,9 +3158,13 @@ def _render_highest_conviction():
         st.success("Nothing with a positive backtested edge is actionable right now.")
         return
 
-    display = pd.DataFrame(ranked)[["Source", "Ticker", "Name", "Price", "Signal Type", "Signal", "Win Rate %", "Avg Return %", "Backtest N", "When"]]
+    display = pd.DataFrame(ranked)[["Source", "Ticker", "Name", "Price", "Signal Type", "Bias", "Signal", "Win Rate %", "Avg Return %", "Backtest N", "When"]]
 
-    st.table(display.style.hide(axis="index").format({"Price": "{:g}", "Win Rate %": "{:.1f}", "Avg Return %": "{:+.2f}"}))
+    st.table(
+        display.style.hide(axis="index")
+        .format({"Price": "{:g}", "Win Rate %": "{:.1f}", "Avg Return %": "{:+.2f}"})
+        .map(Scanner.color_bias, subset=["Bias"])
+    )
 
 
 def render_macro_tab():
@@ -3289,6 +3293,42 @@ def render_stocks_tab():
         render_algo_test_tab()
 
 
+BIAS_EMOJI_MAP = {
+    "🟢": "🟢 Bullish",
+    "🔴": "🔴 Bearish",
+}
+
+
+def _signal_bias(text):
+    """
+    Classifies any signal-label text into a standardized 🟢 Bullish /
+    🟡 Neutral / 🔴 Bearish badge - traders recognize color faster
+    than text (explicit request). Reuses the app's own already-
+    established emoji vocabulary first (every STATE_LABELS dict
+    already leads with a color-coded circle - 🟢/🔴 for a confirmed
+    direction, ⚪🟡🟠🔵 for anything not yet confirmed), falling back to
+    keyword matching only for the one label set that doesn't lead
+    with an emoji (RSI Divergence's "Div1 (bullish divergence)" /
+    "Div2 (bearish divergence)").
+    """
+
+    t = (text or "").strip()
+
+    for emoji, bias in BIAS_EMOJI_MAP.items():
+        if t.startswith(emoji):
+            return bias
+
+    lower = t.lower()
+
+    if "bullish" in lower or "long" in lower or "buy" in lower:
+        return "🟢 Bullish"
+
+    if "bearish" in lower or "short" in lower or "sell" in lower:
+        return "🔴 Bearish"
+
+    return "🟡 Neutral"
+
+
 def _build_command_center_rows():
     """
     Pure data-building step, no st.* calls - shared by Command Center's
@@ -3353,6 +3393,7 @@ def _build_command_center_rows():
                         "Timeframe": _command_center_timeframe(base_timeframe, why),
                         "Signal Type": column,
                         "Style": style,
+                        "Bias": _signal_bias(row[column]),
                         "Signal": row[column],
                         "Win %": stats["win_rate"] if stats else None,
                         "Loss %": stats["loss_rate"] if stats else None,
@@ -3452,7 +3493,11 @@ def _render_command_center_signals():
         # pandas Styler's own default float precision (6 decimals) pads
         # a clean 58576.0 into "58576.000000" regardless of the real
         # value unless a column format is given.
-        st.table(combined.style.hide(axis="index").format({"Price": "{:g}", "Win %": "{:.1f}", "Loss %": "{:.1f}"}, na_rep="—"))
+        st.table(
+            combined.style.hide(axis="index")
+            .format({"Price": "{:g}", "Win %": "{:.1f}", "Loss %": "{:.1f}"}, na_rep="—")
+            .map(Scanner.color_bias, subset=["Bias"])
+        )
 
         _export_command_center_excel(combined)
 
