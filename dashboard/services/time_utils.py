@@ -45,6 +45,25 @@ def to_cet(ts):
     return ts.tz_convert(CET)
 
 
+AGE_SUFFIX_THRESHOLD_DAYS = 2   # same-day/1-day-old is already obvious from the date shown - only flag genuinely old ones
+
+
+def _age_suffix(ts):
+    """
+    " - Nd ago" once an event is old enough that it could otherwise
+    read as a frozen/stale app rather than an accurate "this state
+    genuinely hasn't resolved in N days" (the real, confirmed cause -
+    see analysis/rsi_wave_strategy.py's ALERT_LONG/ALERT_SHORT, which
+    have no invalidation rule and can sit unconfirmed indefinitely).
+    Deliberately a display-only annotation, not a change to the
+    underlying state machine - doesn't touch the validated backtest.
+    """
+
+    days = (now_cet().date() - ts.tz_convert(CET).date()).days
+
+    return f" · {days}d ago" if days >= AGE_SUFFIX_THRESHOLD_DAYS else ""
+
+
 def format_event_time(ts):
     """
     Formats an engine's event_time into a display string - "Jul 16, 7
@@ -57,6 +76,11 @@ def format_event_time(ts):
     to CET would risk shifting it onto the wrong calendar date (e.g. a
     Tokyo midnight bar sliding back a day), so those are shown as their
     original date, untouched.
+
+    Appends "- Nd ago" once an event is 2+ days old - a "still-open
+    Alert" state can legitimately sit unconfirmed for weeks (see
+    _age_suffix), and without this it reads exactly like a frozen app
+    rather than real, accurate data.
     """
 
     if ts is None or pd.isna(ts):
@@ -65,10 +89,11 @@ def format_event_time(ts):
     ts = pd.Timestamp(ts)
 
     if ts.hour == 0 and ts.minute == 0:
-        return ts.strftime("%b %d")
+        return ts.strftime("%b %d") + _age_suffix(ts if ts.tzinfo else ts.tz_localize("UTC"))
 
+    age = _age_suffix(ts if ts.tzinfo else ts.tz_localize("UTC"))
     ts = to_cet(ts)
     hour12 = ts.hour % 12 or 12
     ampm = "AM" if ts.hour < 12 else "PM"
 
-    return f"{ts.strftime('%b %d')}, {hour12} {ampm} CET"
+    return f"{ts.strftime('%b %d')}, {hour12} {ampm} CET{age}"
