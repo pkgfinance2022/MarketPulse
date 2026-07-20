@@ -3149,7 +3149,18 @@ def _render_economic_calendar():
 
 @st.fragment(run_every=30)
 def _render_highest_conviction():
-    """Auto-refreshing fragment - see render_macro_tab's docstring for why. Only called from render_overview_tab's radio branch (not itself a fragment), so this doesn't nest."""
+    """
+    Auto-refreshing fragment - see render_macro_tab's docstring for
+    why. Only called from render_overview_tab's radio branch (not
+    itself a fragment), so this doesn't nest.
+
+    Also triggers its own background-scan staleness check - ranks
+    signals from ALL sources (_build_command_center_rows), so it
+    can't rely on the Markets/Stocks tabs having been visited to keep
+    them fresh, same reasoning as render_ceo_summary.
+    """
+
+    _warm_background_scans()
 
     st.markdown("**🎯 Highest Conviction Trades**")
     st.caption("Currently-actionable signals ranked by each engine's own backtested avg return per trade (not win rate alone - a high win rate with ~0% avg return isn't conviction). Only engines with a genuinely positive backtested edge are shown.")
@@ -3197,17 +3208,12 @@ def render_macro_tab():
     st.subheader("🌍 Macro")
     st.caption("Market regime, key levels, macro readout, cross-asset context, and performers - the macro picture, all in one place.")
 
-    now = time.time()
-
-    perf_entry = universe_cache.get("performance_ranking")
-    perf_stale = perf_entry is None or (not perf_entry["loading"] and (now - perf_entry["ts"]) >= PERFORMANCE_RANKING_REFRESH_SECONDS)
-    if perf_stale:
-        universe_cache.start_scan("performance_ranking", _scan_performance_ranking_data, pool="performance_ranking")
-
-    cross_asset_entry = universe_cache.get("cross_asset_drivers")
-    cross_asset_stale = cross_asset_entry is None or (not cross_asset_entry["loading"] and (now - cross_asset_entry["ts"]) >= CROSS_ASSET_REFRESH_SECONDS)
-    if cross_asset_stale:
-        universe_cache.start_scan("cross_asset_drivers", _scan_cross_asset_drivers_data, pool="cross_asset_drivers")
+    # This tab is visible regardless of which other tab is open, so it
+    # can't rely on the Markets tab (or the one-time startup warm-up)
+    # having been visited to keep global_market/performance_ranking/
+    # cross_asset_drivers fresh - see render_ceo_summary's docstring
+    # for the exact symptom this fixes.
+    _warm_background_scans()
 
     global_market = _get_cached_market("global_market")
 
@@ -3705,8 +3711,13 @@ def render_market_360_tab():
     already-cached universe_cache data every other tab does - no
     fetch of its own.
 
-    Auto-refreshing fragment - see render_macro_tab's docstring for why.
+    Auto-refreshing fragment - see render_macro_tab's docstring for
+    why. Also triggers its own background-scan staleness check - uses
+    ALL four sources, so it can't rely on the Markets/Stocks tabs
+    having been visited to keep them fresh.
     """
+
+    _warm_background_scans()
 
     st.subheader("📊 Market 360 — Heatmap")
     st.caption(
@@ -4557,6 +4568,17 @@ def render_ceo_summary():
     fragment, so this is safe (same sibling-fragment pattern used
     everywhere else in the app).
     """
+
+    # This card depends on ALL of global/us/india/crypto being fresh
+    # (Highest Conviction/Avoid pull from every source), and it's
+    # visible regardless of which tab is open - it can't rely on the
+    # Markets/Stocks tabs (or the one-time startup warm-up) having
+    # been visited to keep any of them fresh. Without this, the
+    # fragment tick still fires every 30s (the clock/toasts look
+    # "live"), but the actual regime/conviction numbers underneath it
+    # can freeze at whatever was cached on the last full page load -
+    # the exact "looks alive, numbers never move" bug this fixes.
+    _warm_background_scans()
 
     global_market = _get_cached_market("global_market")
 
