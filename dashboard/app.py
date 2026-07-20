@@ -1484,6 +1484,7 @@ def _alert_breakdown(df, group_col):
     return pd.DataFrame(rows).sort_values("Alerts", ascending=False)
 
 
+@st.fragment(run_every=60)
 def render_weekly_report_tab():
     """
     A week-scoped digest of AlertLog, separate from the all-time
@@ -1493,6 +1494,10 @@ def render_weekly_report_tab():
     what actually worked out vs didn't, the single best/worst mover,
     which day was busiest, and how this week's win rate stacks up
     against the all-time average for context.
+
+    Auto-refreshing fragment - see render_macro_tab's docstring for
+    why. Only called from render_overview_tab's radio branch (not
+    itself a fragment), so this doesn't nest.
     """
 
     st.subheader("🗓 Weekly Report")
@@ -3142,7 +3147,9 @@ def _render_economic_calendar():
     )
 
 
+@st.fragment(run_every=30)
 def _render_highest_conviction():
+    """Auto-refreshing fragment - see render_macro_tab's docstring for why. Only called from render_overview_tab's radio branch (not itself a fragment), so this doesn't nest."""
 
     st.markdown("**🎯 Highest Conviction Trades**")
     st.caption("Currently-actionable signals ranked by each engine's own backtested avg return per trade (not win rate alone - a high win rate with ~0% avg return isn't conviction). Only engines with a genuinely positive backtested edge are shown.")
@@ -3167,6 +3174,7 @@ def _render_highest_conviction():
     )
 
 
+@st.fragment(run_every=60)
 def render_macro_tab():
     """
     "Why is the market moving today" in under 30 seconds - regime,
@@ -3177,6 +3185,13 @@ def render_macro_tab():
     regime read now. Everything here reads from already-cached scans
     (Global Indices' background scan) - no fresh live fetch blocks
     this tab's own load.
+
+    Wrapped as its own auto-refreshing fragment - none of the pieces
+    it calls are themselves fragments, so this doesn't nest. Without
+    this, it only re-rendered on a full top-level rerun and could sit
+    showing a stale snapshot indefinitely even as its underlying
+    background scans kept completing (the same bug found in
+    render_ceo_summary).
     """
 
     st.subheader("🌍 Macro")
@@ -3215,7 +3230,9 @@ def render_macro_tab():
     render_ema_proximity_tab()
 
 
+@st.fragment(run_every=60)
 def render_news_tab():
+    """Auto-refreshing fragment - see render_macro_tab's docstring for why."""
 
     now = time.time()
 
@@ -3227,7 +3244,9 @@ def render_news_tab():
     _render_top_news()
 
 
+@st.fragment(run_every=300)
 def render_calendar_tab():
+    """Auto-refreshing fragment - see render_macro_tab's docstring for why (longer interval - calendar data barely changes intra-day)."""
 
     _render_economic_calendar()
 
@@ -3677,6 +3696,7 @@ def _build_market_360_data():
     return pd.DataFrame(rows), not_scanned
 
 
+@st.fragment(run_every=60)
 def render_market_360_tab():
     """
     Visual companion to 🌍 Macro - that tab is text/table based for a
@@ -3684,6 +3704,8 @@ def render_market_360_tab():
     hot or cold across the whole universe" look. Reads the same
     already-cached universe_cache data every other tab does - no
     fetch of its own.
+
+    Auto-refreshing fragment - see render_macro_tab's docstring for why.
     """
 
     st.subheader("📊 Market 360 — Heatmap")
@@ -4509,6 +4531,7 @@ def _build_market_brief(regime, avoid, conviction):
     return ". ".join(s[0].upper() + s[1:] for s in sentences) + "."
 
 
+@st.fragment(run_every=30)
 def render_ceo_summary():
     """
     The persistent, always-visible-above-the-tabs "5 second decision"
@@ -4521,6 +4544,18 @@ def render_ceo_summary():
     Command Center first. Reads from universe_cache via
     _get_cached_market, same as Command Center/Market 360 - no
     dependency on which tab has been visited.
+
+    Wrapped as its own auto-refreshing fragment - without this, it was
+    a plain function that only re-ran on a full top-level script pass
+    (a widget interaction outside any fragment), so it could render
+    once during the "still scanning" window right after a restart and
+    then sit frozen indefinitely even as the background scans it
+    depends on kept completing and updating universe_cache - exactly
+    the "wrong CEO Summary even after restart, but the console shows
+    scans finishing" symptom this fixes. This IS called from main(),
+    a plain (non-fragment) function - not nested inside another
+    fragment, so this is safe (same sibling-fragment pattern used
+    everywhere else in the app).
     """
 
     global_market = _get_cached_market("global_market")
