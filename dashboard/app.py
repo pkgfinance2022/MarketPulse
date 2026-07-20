@@ -3187,7 +3187,7 @@ def _render_highest_conviction():
     )
 
 
-@st.fragment(run_every=60)
+@st.fragment(run_every=90)
 def render_macro_tab():
     """
     "Why is the market moving today" in under 30 seconds - regime,
@@ -3709,7 +3709,7 @@ def _build_market_360_data():
     return pd.DataFrame(rows), not_scanned
 
 
-@st.fragment(run_every=120)
+@st.fragment(run_every=180)
 def render_market_360_tab():
     """
     Visual companion to 🌍 Macro - that tab is text/table based for a
@@ -4549,7 +4549,7 @@ def _build_market_brief(regime, avoid, conviction):
     return ". ".join(s[0].upper() + s[1:] for s in sentences) + "."
 
 
-@st.fragment(run_every=60)
+@st.fragment(run_every=120)
 def render_ceo_summary():
     """
     The persistent, always-visible-above-the-tabs "5 second decision"
@@ -4563,29 +4563,25 @@ def render_ceo_summary():
     _get_cached_market, same as Command Center/Market 360 - no
     dependency on which tab has been visited.
 
-    Wrapped as its own auto-refreshing fragment - without this, it was
-    a plain function that only re-ran on a full top-level script pass
-    (a widget interaction outside any fragment), so it could render
-    once during the "still scanning" window right after a restart and
-    then sit frozen indefinitely even as the background scans it
-    depends on kept completing and updating universe_cache - exactly
-    the "wrong CEO Summary even after restart, but the console shows
-    scans finishing" symptom this fixes. This IS called from main(),
-    a plain (non-fragment) function - not nested inside another
-    fragment, so this is safe (same sibling-fragment pattern used
-    everywhere else in the app).
+    Wrapped as its own auto-refreshing fragment so it doesn't sit
+    frozen indefinitely - but deliberately does NOT call
+    _warm_background_scans() itself anymore. That was a real,
+    separate bug found right after shipping the freshness fix: with
+    CEO Summary (and Macro/Highest Conviction/Market 360, at the time)
+    all independently calling the full 8-source scan check every
+    30-60s, on top of the 12+ fragments already always-ticking
+    regardless of which tab is visually selected (Streamlit renders
+    every tab's content continuously server-side - tab switching is
+    client-side CSS only), a live-profiled (py-spy) check of the
+    actual running process showed it burning close to a full CPU core
+    continuously and spawning hundreds of ThreadPoolExecutors within
+    minutes - a genuine, measured "dead slow" regression, not a
+    guess. main()'s own startup call (and any real user interaction
+    anywhere in the app, which triggers a full rerun) is enough to
+    keep this fresh without a dedicated timer re-triggering scans on
+    top of everything else - staleness is the lesser cost here vs.
+    the app being unusable.
     """
-
-    # This card depends on ALL of global/us/india/crypto being fresh
-    # (Highest Conviction/Avoid pull from every source), and it's
-    # visible regardless of which tab is open - it can't rely on the
-    # Markets/Stocks tabs (or the one-time startup warm-up) having
-    # been visited to keep any of them fresh. Without this, the
-    # fragment tick still fires every 30s (the clock/toasts look
-    # "live"), but the actual regime/conviction numbers underneath it
-    # can freeze at whatever was cached on the last full page load -
-    # the exact "looks alive, numbers never move" bug this fixes.
-    _warm_background_scans()
 
     global_market = _get_cached_market("global_market")
 
