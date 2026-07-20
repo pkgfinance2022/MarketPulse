@@ -3147,20 +3147,22 @@ def _render_economic_calendar():
     )
 
 
-@st.fragment(run_every=30)
+@st.fragment(run_every=45)
 def _render_highest_conviction():
     """
     Auto-refreshing fragment - see render_macro_tab's docstring for
     why. Only called from render_overview_tab's radio branch (not
     itself a fragment), so this doesn't nest.
 
-    Also triggers its own background-scan staleness check - ranks
-    signals from ALL sources (_build_command_center_rows), so it
-    can't rely on the Markets/Stocks tabs having been visited to keep
-    them fresh, same reasoning as render_ceo_summary.
+    Deliberately does NOT call _warm_background_scans() itself -
+    render_ceo_summary (always mounted, ticks every 30s) already owns
+    that check. Every one of these fragments calling the full 8-source
+    staleness check independently was itself a real performance
+    problem (found right after shipping the earlier staleness fix) -
+    redundant, compounding background work on top of everything that
+    was already auto-refreshing. Only one place needs to own it; this
+    one just reads whatever's already fresh.
     """
-
-    _warm_background_scans()
 
     st.markdown("**🎯 Highest Conviction Trades**")
     st.caption("Currently-actionable signals ranked by each engine's own backtested avg return per trade (not win rate alone - a high win rate with ~0% avg return isn't conviction). Only engines with a genuinely positive backtested edge are shown.")
@@ -3203,17 +3205,15 @@ def render_macro_tab():
     showing a stale snapshot indefinitely even as its underlying
     background scans kept completing (the same bug found in
     render_ceo_summary).
+
+    Deliberately does NOT call _warm_background_scans() itself -
+    render_ceo_summary (always mounted, ticks every 30s) already owns
+    that check; see its docstring for why every fragment doing this
+    independently was itself a real performance problem.
     """
 
     st.subheader("🌍 Macro")
     st.caption("Market regime, key levels, macro readout, cross-asset context, and performers - the macro picture, all in one place.")
-
-    # This tab is visible regardless of which other tab is open, so it
-    # can't rely on the Markets tab (or the one-time startup warm-up)
-    # having been visited to keep global_market/performance_ranking/
-    # cross_asset_drivers fresh - see render_ceo_summary's docstring
-    # for the exact symptom this fixes.
-    _warm_background_scans()
 
     global_market = _get_cached_market("global_market")
 
@@ -3236,9 +3236,9 @@ def render_macro_tab():
     render_ema_proximity_tab()
 
 
-@st.fragment(run_every=60)
+@st.fragment(run_every=120)
 def render_news_tab():
-    """Auto-refreshing fragment - see render_macro_tab's docstring for why."""
+    """Auto-refreshing fragment - see render_macro_tab's docstring for why. Slower interval - underlying news cache only refreshes every 30 min anyway."""
 
     now = time.time()
 
@@ -3250,9 +3250,16 @@ def render_news_tab():
     _render_top_news()
 
 
-@st.fragment(run_every=300)
 def render_calendar_tab():
-    """Auto-refreshing fragment - see render_macro_tab's docstring for why (longer interval - calendar data barely changes intra-day)."""
+    """
+    Deliberately NOT an auto-refreshing fragment, unlike the other new
+    tabs - this data is genuinely static within a session (a CSV file
+    that only changes when manually updated, at most weekly), so
+    there's no real staleness risk to guard against here, and one
+    fewer always-ticking fragment helps the aggregate background load
+    (see render_ceo_summary's docstring for why that load became a
+    real problem).
+    """
 
     _render_economic_calendar()
 
@@ -3702,7 +3709,7 @@ def _build_market_360_data():
     return pd.DataFrame(rows), not_scanned
 
 
-@st.fragment(run_every=60)
+@st.fragment(run_every=120)
 def render_market_360_tab():
     """
     Visual companion to 🌍 Macro - that tab is text/table based for a
@@ -3712,12 +3719,12 @@ def render_market_360_tab():
     fetch of its own.
 
     Auto-refreshing fragment - see render_macro_tab's docstring for
-    why. Also triggers its own background-scan staleness check - uses
-    ALL four sources, so it can't rely on the Markets/Stocks tabs
-    having been visited to keep them fresh.
+    why. Deliberately does NOT call _warm_background_scans() itself -
+    render_ceo_summary already owns that check. Slower interval than
+    the others (120s, not 60s) since rebuilding a plotly treemap is
+    real CPU work, and this is a visual companion, not core trading
+    functionality - it doesn't need to be as fresh as Command Center.
     """
-
-    _warm_background_scans()
 
     st.subheader("📊 Market 360 — Heatmap")
     st.caption(
@@ -4542,7 +4549,7 @@ def _build_market_brief(regime, avoid, conviction):
     return ". ".join(s[0].upper() + s[1:] for s in sentences) + "."
 
 
-@st.fragment(run_every=30)
+@st.fragment(run_every=60)
 def render_ceo_summary():
     """
     The persistent, always-visible-above-the-tabs "5 second decision"
