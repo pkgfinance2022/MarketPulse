@@ -396,6 +396,22 @@ class DashboardLoader:
             df.at[idx, "1H %"] = change_1h if change_1h is not None else 0.0
             df.at[idx, "Intraday %"] = round(0.4 * (change_15m or 0.0) + 0.6 * (change_1h or 0.0), 2)
 
+            # "Change %" (the daily change) used to only get updated by
+            # the full rescan (every 10 min for Global Indices), while
+            # this loop refreshes Price every 45s - real bug found in
+            # production: Price already reflecting a bounce-back while
+            # Change % still showed the older, more negative reading
+            # from up to 10 minutes earlier, visibly contradicting each
+            # other in the same UI (e.g. Command Center's Movers table
+            # next to the CEO Summary's "Avoid" pick). Same 96-bar
+            # (~24h) lookback SummaryService.build() uses for change_1d,
+            # recomputed here from the same 15m/5d bars already fetched
+            # above - no extra fetch needed to keep the two consistent.
+            if len(close) > 96:
+                base = float(close.iloc[-97])
+                if base:
+                    df.at[idx, "Change %"] = round((latest - base) / base * 100, 2)
+
         return df
 
     @classmethod
