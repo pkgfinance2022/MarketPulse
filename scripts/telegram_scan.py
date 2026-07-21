@@ -112,6 +112,17 @@ def tickers_for(country, sector="All"):
             if a.category != "Indian Indices" or a.symbol in GLOBAL_MACRO_INDIA_INCLUDE
         ]
 
+        # Mirrors dashboard/app.py's _scan_global_indices_data exclusion,
+        # which this standalone script had NEVER had - a real gap: US
+        # Rates (^TNX/^FVX/^IRX) are yield levels, not tradeable price
+        # series, and VIX (Industry="Volatility") has no tradeable spot
+        # instrument at all (no shares, no direct short - only futures/
+        # ETPs like SVXY/VXX, which move on the futures curve, not the
+        # spot index's own RSI/price action this scanner scores). Left
+        # unfiltered here, this script sent a real "SHORT VIX" Telegram
+        # alert that can't actually be acted on as stated.
+        assets = [a for a in assets if a.category != "US Rates" and a.industry != "Volatility"]
+
     if sector != "All":
         assets = [a for a in assets if a.category == sector]
 

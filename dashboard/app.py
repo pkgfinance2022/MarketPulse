@@ -764,7 +764,17 @@ def _scan_global_indices_data(sector):
         # Telegram alerts on it. Screened out of every signal engine
         # below; Price/Change %/Status still populate normally via the
         # unfiltered `df` above, which is all the regime read needs.
-        tickers = df[df["Sector"] != "US Rates"]["Ticker"].tolist()
+        #
+        # VIX (Industry="Volatility") gets the same treatment for a
+        # different reason - a real, confirmed complaint: the app fired
+        # a "SHORT VIX" alert, but the spot VIX index itself has no
+        # tradeable instrument at all (no shares, no direct short) -
+        # you'd need VIX futures or an ETP like SVXY/VXX, both of which
+        # move on contango/backwardation in the futures curve, not the
+        # spot index's own RSI/price action these engines score. A
+        # signal computed on the spot index doesn't transfer to how
+        # VIX exposure is actually traded.
+        tickers = df[(df["Sector"] != "US Rates") & (df["Industry"] != "Volatility")]["Ticker"].tolist()
 
         wave_states = RSIWaveStatusService.screen_states(tickers)
         wave_labels = {t: RSIWaveStrategy.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in wave_states.items()}
@@ -2967,7 +2977,7 @@ def _scan_macro_news_data():
     dashboard/services/macro_news.py.
     """
 
-    return {"headlines": macro_news.top_headlines(limit=10)}
+    return macro_news.scan(limit=10, limit_per_ticker=3)
 
 
 def _macro_value(df, ticker, column):
@@ -3198,6 +3208,92 @@ def _render_top_worst_performers():
             )
 
 
+MOVER_NEWS_THRESHOLD_PCT = 0.3   # below this, a ticker's move is too small today to be worth explaining
+
+
+def _render_market_moving_news():
+    """
+    Connects today's actual biggest mover (among the small macro ticker
+    set macro_news.py already covers) back to the headline(s) filed
+    against it specifically - "all indices are bullish, there must be
+    a reason for it" answered directly, instead of leaving the flat
+    News feed below as a "guess which of these 10 stories explains it"
+    exercise.
+
+    Deliberately doesn't overclaim: if a real mover has no headline
+    tagged to it (a common, honest outcome - Yahoo's per-ticker feed
+    isn't guaranteed to have filed anything against a specific day's
+    move), this says so rather than showing an unrelated headline as
+    if it were the explanation.
+    """
+
+    global_market = _get_cached_market("global_market")
+    news_entry = universe_cache.get("macro_news")
+
+    if global_market is None or news_entry is None or news_entry["data"] is None:
+        return
+
+    df = global_market["df"]
+    by_ticker = news_entry["data"].get("by_ticker", {})
+
+    movers = []
+
+    for ticker in macro_news.MACRO_NEWS_TICKERS:
+
+        change = _macro_value(df, ticker, "Change %")
+        name = _macro_value(df, ticker, "Name")
+
+        if change is None or name is None:
+            continue
+
+        movers.append({"ticker": ticker, "name": name, "change": float(change)})
+
+    movers = [m for m in movers if abs(m["change"]) >= MOVER_NEWS_THRESHOLD_PCT]
+
+    if not movers:
+        return
+
+    movers.sort(key=lambda m: abs(m["change"]), reverse=True)
+
+    st.markdown("**🔥 What's Moving Markets Today**")
+    st.caption(
+        "Today's biggest movers among the tickers this news feed covers, and the headline(s) actually "
+        "filed against each - not a guess at which story explains it."
+    )
+
+    for mover in movers[:3]:
+
+        arrow = "🟢" if mover["change"] > 0 else "🔴"
+        st.markdown(f"{arrow} **{mover['name']}** ({mover['change']:+.2f}%)")
+
+        items = by_ticker.get(mover["ticker"], [])
+
+        if not items:
+            st.caption("No specific headline filed against this move yet.")
+            continue
+
+        for item in items:
+
+            title = item.get("title") or "(untitled)"
+            url = item.get("url")
+            publisher = item.get("publisher") or ""
+
+            try:
+                when = time_utils.format_event_time(pd.Timestamp(item.get("pub_date"))) if item.get("pub_date") else None
+            except (ValueError, TypeError):
+                when = None
+
+            meta = " — ".join(part for part in (publisher, when) if part)
+            meta_text = f" — *{meta}*" if meta else ""
+
+            if url:
+                st.markdown(f"- [{title}]({url}){meta_text}")
+            else:
+                st.markdown(f"- {title}{meta_text}")
+
+    st.divider()
+
+
 def _render_top_news():
 
     st.markdown("**📰 Top News**")
@@ -3351,6 +3447,7 @@ def render_news_tab():
     if news_stale:
         universe_cache.start_scan("macro_news", _scan_macro_news_data, pool="macro_news")
 
+    _render_market_moving_news()
     _render_top_news()
 
 

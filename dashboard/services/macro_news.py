@@ -32,20 +32,37 @@ def _parse_pub_date(pub_date):
         return datetime.min.replace(tzinfo=timezone.utc)
 
 
-def top_headlines(limit=10):
+def scan(limit=10, limit_per_ticker=3):
     """
-    Fetches news for each ticker in MACRO_NEWS_TICKERS, dedupes by
-    title (the same real-world story often gets tagged to more than
-    one of these tickers), and returns the `limit` most recent, newest
-    first.
+    Fetches news for each ticker in MACRO_NEWS_TICKERS once, returning
+    both a deduped flat feed (the same real-world story often gets
+    tagged to more than one of these tickers, so "headlines" dedupes
+    by title) and a per-ticker grouping ("by_ticker") that does NOT
+    dedupe - the same story showing up under more than one mover is
+    useful signal there, not noise.
+
+    The per-ticker view exists so a caller can connect today's actual
+    biggest mover back to the headline(s) tagged to it specifically
+    ("NASDAQ is up - here's the headline actually filed against
+    NASDAQ today"), instead of the flat feed's "here are 10 recent
+    macro headlines, good luck guessing which one explains today's
+    move."
     """
 
     seen_titles = set()
     combined = []
+    by_ticker = {}
 
     for ticker in MACRO_NEWS_TICKERS:
 
-        for item in StockNewsService.latest(ticker, limit=5):
+        ticker_items = sorted(
+            StockNewsService.latest(ticker, limit=5),
+            key=lambda item: _parse_pub_date(item.get("pub_date")),
+            reverse=True,
+        )
+        by_ticker[ticker] = ticker_items[:limit_per_ticker]
+
+        for item in ticker_items:
 
             title = item.get("title", "").strip()
 
@@ -57,4 +74,4 @@ def top_headlines(limit=10):
 
     combined.sort(key=lambda item: _parse_pub_date(item.get("pub_date")), reverse=True)
 
-    return combined[:limit]
+    return {"headlines": combined[:limit], "by_ticker": by_ticker}
