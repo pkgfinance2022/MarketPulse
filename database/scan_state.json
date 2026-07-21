@@ -138,7 +138,7 @@
   "ETN:daily": "WATCHING",
   "ETN:weekly": "WATCHING",
   "EURUSD=X:reversal_1h": "WATCHING",
-  "EURUSD=X:wave": "ALERT_LONG",
+  "EURUSD=X:wave": "WATCHING",
   "FCX:daily": "WATCHING",
   "FCX:weekly": "WATCHING",
   "FINCABLES.NS:daily": "WATCHING",
