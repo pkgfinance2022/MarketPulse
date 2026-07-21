@@ -2646,7 +2646,37 @@ def _get_cached_market(session_key):
 
     data = cache_entry["data"]
 
-    return {"df": data["df"], "sector": data.get("sector")}
+    return {"df": data["df"], "sector": data.get("sector"), "ts": cache_entry["ts"]}
+
+
+def _freshness_caption(sources):
+    """
+    "🕐 Data as of HH:MM CET (Xm ago)" - or, when combining more than
+    one cached source (Command Center/Market 360 pull from up to 4),
+    the OLDEST of them, since that's the real staleness bound on
+    what's displayed. `sources` is a list of (label, ts) pairs.
+
+    Added after a real complaint: the aggregated/summary views (CEO
+    Summary, Cross-Asset Context, Command Center, Market 360) had no
+    visible timestamp at all, unlike every per-tab Scanner table
+    (which has always shown "Last refreshed at ..."). Without it,
+    there was no way to tell - short of asking - whether a number on
+    screen reflected a check from 2 minutes ago or 2 hours ago.
+    """
+
+    valid = [(label, ts) for label, ts in sources if ts is not None]
+
+    if not valid:
+        return
+
+    label, oldest_ts = min(valid, key=lambda pair: pair[1])
+    age_minutes = round((time.time() - oldest_ts) / 60)
+    refreshed_at = time_utils.unix_to_cet(oldest_ts).strftime("%H:%M:%S CET")
+
+    if len(valid) > 1:
+        st.caption(f"🕐 Data as of {refreshed_at} ({age_minutes} min ago) - oldest source: {label}")
+    else:
+        st.caption(f"🕐 Data as of {refreshed_at} ({age_minutes} min ago)")
 
 
 COMMAND_CENTER_SOURCES = [
@@ -3292,6 +3322,7 @@ def render_macro_tab():
     if global_market is None:
         st.info("Still scanning Global Indices for the first time — check back in a moment.")
     else:
+        _freshness_caption([("Global Indices", global_market["ts"])])
         df = global_market["df"]
         regime = _render_market_regime(df)
         st.divider()
@@ -3558,6 +3589,12 @@ def _render_command_center_signals():
         "see the CEO Summary above or 🌍 Macro."
     )
 
+    _freshness_caption([
+        (label, m["ts"])
+        for label, key in COMMAND_CENTER_SOURCES
+        if (m := _get_cached_market(key))
+    ])
+
     rows, not_scanned = _build_command_center_rows()
 
     if not_scanned:
@@ -3673,6 +3710,8 @@ def render_global_indices_movers():
     if global_market is None or global_market["df"].empty:
         st.info("Still scanning Global Indices for the first time — check back in a moment.")
         return
+
+    _freshness_caption([("Global Indices", global_market["ts"])])
 
     timeframe_choice = st.radio(
         "Sort by", ["15m", "1H"], horizontal=True, key="command_center_movers_timeframe",
@@ -3804,6 +3843,12 @@ def render_market_360_tab():
         "visual read of what's hot and what's not. Box size is uniform (not weighted by market cap). "
         "For the text/table macro readout, see 🌍 Macro."
     )
+
+    _freshness_caption([
+        (label, m["ts"])
+        for label, key in MARKET_360_SOURCES
+        if (m := _get_cached_market(key))
+    ])
 
     df, not_scanned = _build_market_360_data()
 
@@ -4662,6 +4707,20 @@ def render_ceo_summary():
         return
 
     df = global_market["df"]
+
+    # Highest Conviction pulls from Global Indices + US Stocks + Crypto
+    # (see _build_command_center_rows) - the freshness shown here has
+    # to reflect the OLDEST of all three, not just Global Indices, or
+    # this could read "as of 2 min ago" while the actual conviction
+    # pick is based on a US Stocks scan from an hour ago.
+    _freshness_caption(
+        [("Global Indices", global_market["ts"])]
+        + [
+            (label, m["ts"])
+            for label, key in COMMAND_CENTER_BUYSELL_SOURCES
+            if key != "global_market" and (m := _get_cached_market(key))
+        ]
+    )
 
     vix_level = _macro_value(df, "^VIX", "Price")
     vix_change = _macro_value(df, "^VIX", "Change %")
