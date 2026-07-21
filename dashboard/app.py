@@ -2744,10 +2744,18 @@ def _build_command_center_timeframe_df(signal_columns, sources):
         if not available:
             continue
 
+        # A column only counts as "actionable" here if it's BOTH
+        # non-Watching AND fresh (<= MAX_SIGNAL_AGE_DAYS old) - a row
+        # can still make it into the table via one fresh column while
+        # another column on the same row is a stale holdover (see
+        # MAX_SIGNAL_AGE_DAYS), but that stale column gets blanked out
+        # below rather than displayed alongside the fresh one.
         mask = pd.Series(False, index=df.index)
 
-        for column, _, _ in available:
-            mask = mask | ~df[column].astype(str).str.contains("watching", case=False, na=False)
+        for column, _, ts_column in available:
+            non_watching = ~df[column].astype(str).str.contains("watching", case=False, na=False)
+            fresh = df[ts_column].apply(_signal_is_fresh) if ts_column in df.columns else False
+            mask = mask | (non_watching & fresh)
 
         for _, row in df[mask].iterrows():
 
@@ -2766,8 +2774,15 @@ def _build_command_center_timeframe_df(signal_columns, sources):
             }
 
             for column, _, ts_column in available:
-                entry[column] = row[column]
-                entry[ts_column] = row.get(ts_column, "—")
+
+                ts_value = row.get(ts_column, "—")
+
+                if _signal_is_fresh(ts_value):
+                    entry[column] = row[column]
+                    entry[ts_column] = ts_value
+                else:
+                    entry[column] = "⚪ Watching"
+                    entry[ts_column] = "—"
 
             rows.append(entry)
 
@@ -2825,7 +2840,12 @@ def _parse_command_center_when(when_text):
         return pd.Timestamp.min
 
     year = time_utils.now_cet().year
-    cleaned = when_text.replace(" CET", "")
+    # Strip the " - Nd ago" suffix (see time_utils.format_event_time)
+    # before parsing - it isn't part of either date format below, and
+    # left in place it silently fails the parse, quietly sending every
+    # 2+ day old row to the very bottom via the "—" fallback instead of
+    # sorting it by its real date.
+    cleaned = when_text.split(" · ")[0].replace(" CET", "")
 
     try:
         return pd.to_datetime(f"{cleaned} {year}", format="%b %d, %I %p %Y")
@@ -2836,6 +2856,32 @@ def _parse_command_center_when(when_text):
         return pd.to_datetime(f"{cleaned} {year}", format="%b %d %Y")
     except ValueError:
         return pd.Timestamp.min
+
+
+# How stale a signal reading can be before "Everything Found" hides it.
+# ALERT_LONG/ALERT_SHORT (see analysis/rsi_wave_strategy.py) has no
+# invalidation rule and can sit unconfirmed for weeks - without this,
+# a 29-day-old "Alert (LONG)" tags along on every row that has ANY
+# fresh signal, reading as "the app is stuck" rather than "here's
+# what's actually worth acting on today".
+MAX_SIGNAL_AGE_DAYS = 7
+
+
+def _signal_is_fresh(when_text):
+    """
+    True if a "When"/timestamp display string is within
+    MAX_SIGNAL_AGE_DAYS of now - "—" (never fired) and unparseable
+    text are treated as not fresh, same as a stale one.
+    """
+
+    parsed = _parse_command_center_when(when_text)
+
+    if parsed == pd.Timestamp.min:
+        return False
+
+    age_days = (time_utils.now_cet().replace(tzinfo=None) - parsed).days
+
+    return age_days < MAX_SIGNAL_AGE_DAYS
 
 
 def _command_center_timeframe(base_timeframe, why_text):

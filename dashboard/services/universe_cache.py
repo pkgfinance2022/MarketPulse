@@ -71,8 +71,13 @@ CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "database" / "univer
 # would make a previously-cached result actually wrong if changed.
 # Deliberately excludes dashboard/app.py and dashboard/widgets/ (pure
 # rendering - changing a label or adding a tab doesn't change what a
-# scan computes).
-_SCAN_LOGIC_ROOTS = ["analysis", "providers", "core", "dashboard/services"]
+# scan computes). Top-level "services" (distinct from
+# dashboard/services) was missing here even though dashboard_loader.py
+# imports SummaryService from it - a real gap found when
+# summary_service.py's change_1d formula was fixed and the persisted
+# cache didn't invalidate, since nothing outside dashboard/services/
+# was ever hashed.
+_SCAN_LOGIC_ROOTS = ["analysis", "providers", "core", "services", "dashboard/services"]
 
 
 def _scan_logic_fingerprint():

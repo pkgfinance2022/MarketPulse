@@ -6,7 +6,7 @@ for every Asset.
 """
 
 from core.asset import Asset
-from core.timeseries import time_based_pct_change
+from core.timeseries import daily_pct_change, time_based_pct_change
 
 
 class SummaryService:
@@ -54,4 +54,4 @@ class SummaryService:
             return round(((new - old) / old) * 100, 2)
 
         asset.summary.change_4h = pct_change(16)
-        asset.summary.change_1d = pct_change(96)
+        asset.summary.change_1d = daily_pct_change(close)

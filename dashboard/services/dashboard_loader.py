@@ -13,7 +13,7 @@ from analysis.signal_engine import SignalEngine
 from analysis.technical_engine import TechnicalEngine
 from analysis.valuation_engine import ValuationEngine
 from core.loader import AssetLoader
-from core.timeseries import time_based_pct_change
+from core.timeseries import daily_pct_change, time_based_pct_change
 from models.asset import AssetModel
 from providers.yahoo import YahooProvider
 from services.market_service import MarketService
@@ -403,14 +403,22 @@ class DashboardLoader:
             # Change % still showed the older, more negative reading
             # from up to 10 minutes earlier, visibly contradicting each
             # other in the same UI (e.g. Command Center's Movers table
-            # next to the CEO Summary's "Avoid" pick). Same 96-bar
-            # (~24h) lookback SummaryService.build() uses for change_1d,
-            # recomputed here from the same 15m/5d bars already fetched
-            # above - no extra fetch needed to keep the two consistent.
-            if len(close) > 96:
-                base = float(close.iloc[-97])
-                if base:
-                    df.at[idx, "Change %"] = round((latest - base) / base * 100, 2)
+            # next to the CEO Summary's "Avoid" pick). Same
+            # daily_pct_change() SummaryService.build() uses for
+            # change_1d, recomputed here from the same 15m/5d bars
+            # already fetched above - no extra fetch needed to keep the
+            # two consistent.
+            change_1d = daily_pct_change(close)
+
+            if change_1d is not None:
+                df.at[idx, "Change %"] = change_1d
+                # "1D %" is the same underlying value as "Change %"
+                # (see dashboard_loader._canonical_row) - only patching
+                # one of the two would leave them able to silently
+                # disagree with each other for up to 10 minutes,
+                # exactly the bug this whole fix addresses.
+                if "1D %" in df.columns:
+                    df.at[idx, "1D %"] = change_1d
 
         return df
 

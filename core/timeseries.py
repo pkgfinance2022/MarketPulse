@@ -48,3 +48,37 @@ def time_based_pct_change(close, minutes, max_gap_ratio=1.5):
         return None
 
     return round((latest_price / reference_price - 1) * 100, 2)
+
+
+def daily_pct_change(close):
+    """
+    Percent change from the latest bar to the last bar of the most
+    recent PRIOR calendar day (in the bars' own tz) - i.e. the
+    standard "vs previous close" daily change.
+
+    Deliberately NOT a fixed bar count: a 96-bar lookback on 15m bars
+    is exactly 24h for a 24/7 asset (crypto/forex), but for a
+    session-based market (equities/indices, ~6.5h/day) it lands 3-4
+    TRADING DAYS back instead of one - a real, confirmed bug where
+    NASDAQ's "Change %" showed -2.8% (vs a bar from 5 calendar days
+    earlier) while the actual latest-vs-yesterday move was small and
+    positive.
+    """
+
+    if close is None or len(close) < 2:
+        return None
+
+    latest_price = float(close.iloc[-1])
+    latest_date = close.index[-1].date()
+
+    prior = close[close.index.date != latest_date]
+
+    if prior.empty:
+        return None
+
+    reference_price = float(prior.iloc[-1])
+
+    if reference_price == 0:
+        return None
+
+    return round((latest_price / reference_price - 1) * 100, 2)
