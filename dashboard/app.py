@@ -1039,7 +1039,7 @@ def render_global_indices_live():
     df = DashboardLoader.refresh_intraday_prices(market["df"])
     st.session_state.global_market["df"] = df
 
-    st.caption("🔴 Live — refreshes every 45s (scanner: 15m bars · pullback setup: 1H). For the VIX/regime risk read, see the CEO Summary above or 🌍 Macro.")
+    st.caption("🔴 Live — refreshes every 45s (scanner: 15m bars · pullback setup: 1H). For the VIX/regime risk read, see 🌍 Macro.")
 
     # "Where did 65 just get crossed" - a quick at-a-glance highlight,
     # since that's often where the real move starts. Reuses the
@@ -2927,9 +2927,9 @@ def _blank_stale_signal(df, column, ts_column):
     sit unconfirmed for weeks) showing unfiltered on the Global Indices
     tab itself, since that tab's Scanner table reads the same cached
     df directly. Blanking at the source means every reader (the tab's
-    own table, both Command Center tables, CEO Summary/conviction
-    ranking) sees the same already-filtered picture with no separate
-    fix needed per screen.
+    own table, both Command Center tables, conviction ranking) sees
+    the same already-filtered picture with no separate fix needed per
+    screen.
     """
 
     if column not in df.columns or ts_column not in df.columns:
@@ -3257,13 +3257,13 @@ def _render_highest_conviction():
     itself a fragment), so this doesn't nest.
 
     Deliberately does NOT call _warm_background_scans() itself -
-    render_ceo_summary (always mounted, ticks every 30s) already owns
-    that check. Every one of these fragments calling the full 8-source
-    staleness check independently was itself a real performance
-    problem (found right after shipping the earlier staleness fix) -
-    redundant, compounding background work on top of everything that
-    was already auto-refreshing. Only one place needs to own it; this
-    one just reads whatever's already fresh.
+    main()'s own startup call already owns that check. Every one of
+    these fragments calling the full 8-source staleness check
+    independently was itself a real performance problem (found right
+    after shipping the earlier staleness fix) - redundant, compounding
+    background work on top of everything that was already
+    auto-refreshing. Only one place needs to own it; this one just
+    reads whatever's already fresh.
     """
 
     st.markdown("**🎯 Highest Conviction Trades**")
@@ -3305,13 +3305,14 @@ def render_macro_tab():
     it calls are themselves fragments, so this doesn't nest. Without
     this, it only re-rendered on a full top-level rerun and could sit
     showing a stale snapshot indefinitely even as its underlying
-    background scans kept completing (the same bug found in
-    render_ceo_summary).
+    background scans kept completing.
 
     Deliberately does NOT call _warm_background_scans() itself -
-    render_ceo_summary (always mounted, ticks every 30s) already owns
-    that check; see its docstring for why every fragment doing this
-    independently was itself a real performance problem.
+    main()'s own startup call already owns that check; every fragment
+    doing this independently was itself a real performance problem
+    (close to a full CPU core sustained, hundreds of ThreadPoolExecutors
+    spawned within minutes, measured via py-spy against the real
+    running process).
     """
 
     st.subheader("🌍 Macro")
@@ -3360,8 +3361,8 @@ def render_calendar_tab():
     that only changes when manually updated, at most weekly), so
     there's no real staleness risk to guard against here, and one
     fewer always-ticking fragment helps the aggregate background load
-    (see render_ceo_summary's docstring for why that load became a
-    real problem).
+    (see render_macro_tab's docstring for why that load became a real
+    problem).
     """
 
     _render_economic_calendar()
@@ -3586,7 +3587,7 @@ def _render_command_center_signals():
         "Aggregates every actionable signal already sitting in Global Indices, US Stocks, Indian Stocks, and "
         "Crypto - reads each tab's cached scan, doesn't trigger any new fetches. Updates itself automatically "
         "as each tab's background scan completes - no need to visit them first. For the VIX/regime risk read, "
-        "see the CEO Summary above or 🌍 Macro."
+        "see 🌍 Macro."
     )
 
     _freshness_caption([
@@ -3831,7 +3832,7 @@ def render_market_360_tab():
 
     Auto-refreshing fragment - see render_macro_tab's docstring for
     why. Deliberately does NOT call _warm_background_scans() itself -
-    render_ceo_summary already owns that check. Slower interval than
+    main()'s own startup call already owns that check. Slower interval than
     the others (120s, not 60s) since rebuilding a plotly treemap is
     real CPU work, and this is a visual companion, not core trading
     functionality - it doesn't need to be as fresh as Command Center.
@@ -4565,205 +4566,6 @@ def render_ema_proximity_tab():
         )
 
 
-def _highest_conviction_pick():
-    """
-    The single best currently-actionable signal across all four
-    sources, by backtested avg return - the exact same real data
-    Command Center's Highest Conviction section already computes, just
-    taking the top-1 result for the CEO Summary card.
-    """
-
-    rows, _ = _build_command_center_rows()
-    ranked = conviction_ranking.rank(rows, top_n=1)
-
-    return ranked[0] if ranked else None
-
-
-def _avoid_pick(global_df):
-    """
-    The worst-performing major index today (see
-    dashboard/services/cross_asset_status.py's CROSS_ASSET_TARGETS),
-    annotated with a real aligned bearish driver note if one exists -
-    "today's biggest laggard", not a forecast. Returns None if nothing
-    among the majors is actually negative today (no "avoid" to force).
-    """
-
-    if global_df is None or global_df.empty:
-        return None
-
-    candidates = []
-
-    for ticker, name in CROSS_ASSET_TARGETS.items():
-
-        change = _macro_value(global_df, ticker, "Change %")
-
-        if change is not None:
-            candidates.append({"ticker": ticker, "name": name, "change": change})
-
-    if not candidates:
-        return None
-
-    worst = min(candidates, key=lambda c: c["change"])
-
-    if worst["change"] >= 0:
-        return None
-
-    aligned_note = None
-    cache_entry = universe_cache.get("cross_asset_drivers")
-
-    if cache_entry and cache_entry["data"]:
-
-        correlations = cache_entry["data"]["correlations"].get(worst["ticker"], {})
-        today_driver_changes = {
-            "US10Y": _macro_value(global_df, "^TNX", "Change %"),
-            "DXY": _macro_value(global_df, "DX-Y.NYB", "Change %"),
-            "Oil": _macro_value(global_df, "CL=F", "Change %"),
-            "Gold": _macro_value(global_df, "GC=F", "Change %"),
-        }
-        notes = CrossAssetDriverEngine.explain_today(worst["ticker"], correlations, today_driver_changes)
-        bearish_notes = [n for n in notes if n["expected_direction"] == "down"]
-
-        if bearish_notes:
-            aligned_note = bearish_notes[0]
-
-    return {"name": worst["name"], "change": worst["change"], "aligned_note": aligned_note}
-
-
-def _build_market_brief(regime, avoid, conviction):
-    """
-    Rule-based (not AI-generated) narrative paragraph, built entirely
-    from real facts already computed elsewhere on this page (regime,
-    today's weakest major index, the highest-conviction setup, the
-    next calendar catalyst) - deterministic and reproducible, the
-    explicit tradeoff chosen over a real LLM API call (no external
-    dependency, no per-generation cost, but reads more like a formula
-    than genuine prose).
-    """
-
-    sentences = []
-
-    regime_text = regime["label"].split(" ", 1)[-1] if " " in regime["label"] else regime["label"]
-    sentences.append(f"{regime_text} conditions today")
-
-    if regime["factors"]:
-        sentences.append(regime["factors"][0])
-
-    if avoid:
-        sentences.append(f"{avoid['name']} is today's weakest major index ({avoid['change']:+.2f}%)")
-
-    if conviction:
-        sentences.append(f"the highest-conviction setup right now is {conviction['Ticker']} ({conviction['Signal']})")
-
-    events = economic_calendar.upcoming(days=21)
-
-    if not events.empty:
-        next_event = events.iloc[0]
-        sentences.append(f"next major catalyst: {next_event['Event']} on {next_event['Date'].strftime('%b %d')}")
-
-    if not sentences:
-        return None
-
-    return ". ".join(s[0].upper() + s[1:] for s in sentences) + "."
-
-
-@st.fragment(run_every=120)
-def render_ceo_summary():
-    """
-    The persistent, always-visible-above-the-tabs "5 second decision"
-    card - Risk Regime, Highest Conviction, Avoid, the real factors
-    behind them, and a rule-based Market Brief paragraph. Reuses
-    exactly the same real data every other tab already computes
-    (Market Regime, conviction ranking, Cross-Asset Context, Economic
-    Calendar) - no new analysis, just a condensed synthesis so the
-    headline read doesn't require clicking into Daily Must Open /
-    Command Center first. Reads from universe_cache via
-    _get_cached_market, same as Command Center/Market 360 - no
-    dependency on which tab has been visited.
-
-    Wrapped as its own auto-refreshing fragment so it doesn't sit
-    frozen indefinitely - but deliberately does NOT call
-    _warm_background_scans() itself anymore. That was a real,
-    separate bug found right after shipping the freshness fix: with
-    CEO Summary (and Macro/Highest Conviction/Market 360, at the time)
-    all independently calling the full 8-source scan check every
-    30-60s, on top of the 12+ fragments already always-ticking
-    regardless of which tab is visually selected (Streamlit renders
-    every tab's content continuously server-side - tab switching is
-    client-side CSS only), a live-profiled (py-spy) check of the
-    actual running process showed it burning close to a full CPU core
-    continuously and spawning hundreds of ThreadPoolExecutors within
-    minutes - a genuine, measured "dead slow" regression, not a
-    guess. main()'s own startup call (and any real user interaction
-    anywhere in the app, which triggers a full rerun) is enough to
-    keep this fresh without a dedicated timer re-triggering scans on
-    top of everything else - staleness is the lesser cost here vs.
-    the app being unusable.
-    """
-
-    global_market = _get_cached_market("global_market")
-
-    if global_market is None:
-        st.info("🧭 CEO Summary — still scanning for the first time, check back in a moment.")
-        return
-
-    df = global_market["df"]
-
-    # Highest Conviction pulls from Global Indices + US Stocks + Crypto
-    # (see _build_command_center_rows) - the freshness shown here has
-    # to reflect the OLDEST of all three, not just Global Indices, or
-    # this could read "as of 2 min ago" while the actual conviction
-    # pick is based on a US Stocks scan from an hour ago.
-    _freshness_caption(
-        [("Global Indices", global_market["ts"])]
-        + [
-            (label, m["ts"])
-            for label, key in COMMAND_CENTER_BUYSELL_SOURCES
-            if key != "global_market" and (m := _get_cached_market(key))
-        ]
-    )
-
-    vix_level = _macro_value(df, "^VIX", "Price")
-    vix_change = _macro_value(df, "^VIX", "Change %")
-    dxy_change = _macro_value(df, "DX-Y.NYB", "Change %")
-    y10_level = _macro_value(df, "^TNX", "Price")
-    y10_change = _macro_value(df, "^TNX", "Change %")
-    gold_change = _macro_value(df, "GC=F", "Change %")
-    index_rows = df[df["Sector"].astype(str).str.contains("Indices", na=False)]
-    breadth = (index_rows["Change %"] > 0).mean() * 100 if not index_rows.empty else None
-
-    regime = MarketRegimeEngine.classify(
-        vix_level=vix_level, vix_change_pct=vix_change, dxy_change_pct=dxy_change,
-        yield10_level=y10_level, yield10_change_pct=y10_change, gold_change_pct=gold_change,
-        breadth_pct=breadth,
-    )
-
-    conviction = _highest_conviction_pick()
-    avoid = _avoid_pick(df)
-
-    with st.container(border=True):
-
-        st.markdown("#### 🧭 Today's Market — CEO Summary")
-
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-            st.metric("Risk Regime", regime["label"])
-
-        with c2:
-            st.metric("Highest Conviction", conviction["Ticker"] if conviction else "—", delta=conviction["Signal"] if conviction else None)
-
-        with c3:
-            st.metric("Avoid", avoid["name"] if avoid else "Nothing flagged", delta=f"{avoid['change']:+.2f}%" if avoid else None)
-
-        if regime["factors"]:
-            st.caption("**Why:** " + " · ".join(regime["factors"][:3]))
-
-        brief = _build_market_brief(regime, avoid, conviction)
-
-        if brief:
-            st.caption(f"📋 **Market Brief:** {brief}")
-
-
 def main():
 
     _warm_background_scans()
@@ -4776,8 +4578,6 @@ def main():
 
     Header.render()
     MarketStatus.render()
-
-    render_ceo_summary()
 
     refresh_col, _ = st.columns([1, 5])
 
@@ -4800,9 +4600,7 @@ def main():
     # through an ever-growing top-level tab bar. Overview first
     # (what's actionable / already fired), Macro second (why the
     # market's moving), Markets third so it's still the first *live*
-    # tab in the group. The CEO Summary above already covers the
-    # "5 second decision" need - these tabs are for the follow-up
-    # detail once you've scrolled past it.
+    # tab in the group.
     tab_overview, tab_macro, tab_markets, tab_news, tab_calendar, tab_stocks, tab_crypto, tab_industries = st.tabs(
         ["📋 Overview", "🌍 Macro", "📈 Markets", "📰 News", "📅 Calendar", "📊 Stocks", "🪙 Crypto", "🏭 Industries"]
     )
