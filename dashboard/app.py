@@ -771,12 +771,14 @@ def _scan_global_indices_data(sector):
         df["Setup"] = df["Ticker"].map(wave_labels).fillna(df["Setup"])
         df["Setup Full"] = df["Ticker"].map({t: info["description"] for t, info in wave_states.items()}).fillna("")
         df["Setup Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in wave_states.items()}).fillna("—")
+        _blank_stale_signal(df, "Setup", "Setup Timestamp")
 
         reversal_states = ReversalStatusService.screen_states(tickers)
         reversal_labels = {t: ReversalPlaybook.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in reversal_states.items()}
         df["Reversal"] = df["Ticker"].map(reversal_labels).fillna(df["Reversal"])
         df["Reversal Full"] = df["Ticker"].map({t: info["description"] for t, info in reversal_states.items()}).fillna("")
         df["Reversal Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in reversal_states.items()}).fillna("—")
+        _blank_stale_signal(df, "Reversal", "Reversal Timestamp")
 
         # 15m readiness - NOT an independent scan across the whole
         # universe (that dual-timeframe complexity was explicitly
@@ -815,6 +817,7 @@ def _scan_global_indices_data(sector):
         df["Daily Reversal"] = df["Ticker"].map(daily_reversal_labels).fillna("⚪ Watching")
         df["Daily Reversal Full"] = df["Ticker"].map({t: info["description"] for t, info in daily_reversal_states.items()}).fillna("")
         df["Daily Reversal Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in daily_reversal_states.items()}).fillna("—")
+        _blank_stale_signal(df, "Daily Reversal", "Daily Reversal Timestamp")
 
         # Weekly confluence, derived from the same Daily+Weekly scan
         # above - no extra fetch.
@@ -822,6 +825,7 @@ def _scan_global_indices_data(sector):
         df["Weekly"] = df["Ticker"].map(weekly_labels).fillna("⚪ Watching")
         df["Weekly Full"] = df["Ticker"].map({t: info["weekly_description"] for t, info in daily_reversal_states.items()}).fillna("")
         df["Weekly Timestamp"] = df["Ticker"].map({t: _format_event_time(info["weekly_event_time"]) for t, info in daily_reversal_states.items()}).fillna("—")
+        _blank_stale_signal(df, "Weekly", "Weekly Timestamp")
 
         # RSI Divergence (1H) - a separate, deliberately narrower engine
         # from Setup/Reversal above (see analysis/rsi_divergence_strategy.py).
@@ -833,6 +837,7 @@ def _scan_global_indices_data(sector):
         df["RSI Divergence"] = df["Ticker"].map(divergence_labels).fillna("⚪ Watching")
         df["RSI Divergence Full"] = df["Ticker"].map({t: info["description"] for t, info in divergence_states.items()}).fillna("")
         df["RSI Divergence Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in divergence_states.items()}).fillna("—")
+        _blank_stale_signal(df, "RSI Divergence", "RSI Divergence Timestamp")
 
         # Chart Patterns (Daily) - Piercing Pattern + Double Bottom only,
         # the two candlestick/chart patterns that actually backtested
@@ -844,6 +849,7 @@ def _scan_global_indices_data(sector):
         df["Chart Patterns"] = df["Ticker"].map(pattern_labels).fillna("⚪ Watching")
         df["Chart Patterns Full"] = df["Ticker"].map({t: info["description"] for t, info in pattern_states.items()}).fillna("")
         df["Chart Patterns Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in pattern_states.items()}).fillna("—")
+        _blank_stale_signal(df, "Chart Patterns", "Chart Patterns Timestamp")
 
     else:
         divergence_states = {}
@@ -1890,12 +1896,14 @@ def _scan_universe_data(country):
         df["Setup"] = df["Ticker"].map(wave_labels).fillna(df["Setup"])
         df["Setup Full"] = df["Ticker"].map({t: info["description"] for t, info in wave_states.items()}).fillna("")
         df["Setup Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in wave_states.items()}).fillna("—")
+        _blank_stale_signal(df, "Setup", "Setup Timestamp")
 
         reversal_states = ReversalStatusService.screen_states(tickers)
         reversal_labels = {t: ReversalPlaybook.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in reversal_states.items()}
         df["Reversal"] = df["Ticker"].map(reversal_labels).fillna(df["Reversal"])
         df["Reversal Full"] = df["Ticker"].map({t: info["description"] for t, info in reversal_states.items()}).fillna("")
         df["Reversal Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in reversal_states.items()}).fillna("—")
+        _blank_stale_signal(df, "Reversal", "Reversal Timestamp")
 
         # Daily+Weekly read (separate engine,
         # analysis/reversal_playbook_daily.py) - additive alongside the
@@ -1905,6 +1913,7 @@ def _scan_universe_data(country):
         df["Daily Reversal"] = df["Ticker"].map(daily_reversal_labels).fillna("⚪ Watching")
         df["Daily Reversal Full"] = df["Ticker"].map({t: info["description"] for t, info in daily_reversal_states.items()}).fillna("")
         df["Daily Reversal Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in daily_reversal_states.items()}).fillna("—")
+        _blank_stale_signal(df, "Daily Reversal", "Daily Reversal Timestamp")
 
         # Weekly confluence, derived from the same Daily+Weekly scan
         # above - no extra fetch.
@@ -1912,6 +1921,7 @@ def _scan_universe_data(country):
         df["Weekly"] = df["Ticker"].map(weekly_labels).fillna("⚪ Watching")
         df["Weekly Full"] = df["Ticker"].map({t: info["weekly_description"] for t, info in daily_reversal_states.items()}).fillna("")
         df["Weekly Timestamp"] = df["Ticker"].map({t: _format_event_time(info["weekly_event_time"]) for t, info in daily_reversal_states.items()}).fillna("—")
+        _blank_stale_signal(df, "Weekly", "Weekly Timestamp")
 
         # RSI Divergence (1H) - US Stocks only, deliberately not
         # extended to Indian Stocks or Crypto (explicit scope request -
@@ -1924,6 +1934,7 @@ def _scan_universe_data(country):
             df["RSI Divergence"] = df["Ticker"].map(divergence_labels).fillna("⚪ Watching")
             df["RSI Divergence Full"] = df["Ticker"].map({t: info["description"] for t, info in divergence_states.items()}).fillna("")
             df["RSI Divergence Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in divergence_states.items()}).fillna("—")
+            _blank_stale_signal(df, "RSI Divergence", "RSI Divergence Timestamp")
 
     return {
         "df": df,
@@ -2744,18 +2755,14 @@ def _build_command_center_timeframe_df(signal_columns, sources):
         if not available:
             continue
 
-        # A column only counts as "actionable" here if it's BOTH
-        # non-Watching AND fresh (<= MAX_SIGNAL_AGE_DAYS old) - a row
-        # can still make it into the table via one fresh column while
-        # another column on the same row is a stale holdover (see
-        # MAX_SIGNAL_AGE_DAYS), but that stale column gets blanked out
-        # below rather than displayed alongside the fresh one.
+        # Stale readings (see MAX_SIGNAL_AGE_DAYS) are already blanked
+        # back to "⚪ Watching"/"—" at the scan itself (_blank_stale_signal,
+        # called from _scan_global_indices_data/_scan_universe_data) -
+        # a plain "isn't Watching" check is enough here.
         mask = pd.Series(False, index=df.index)
 
-        for column, _, ts_column in available:
-            non_watching = ~df[column].astype(str).str.contains("watching", case=False, na=False)
-            fresh = df[ts_column].apply(_signal_is_fresh) if ts_column in df.columns else False
-            mask = mask | (non_watching & fresh)
+        for column, _, _ in available:
+            mask = mask | ~df[column].astype(str).str.contains("watching", case=False, na=False)
 
         for _, row in df[mask].iterrows():
 
@@ -2774,15 +2781,8 @@ def _build_command_center_timeframe_df(signal_columns, sources):
             }
 
             for column, _, ts_column in available:
-
-                ts_value = row.get(ts_column, "—")
-
-                if _signal_is_fresh(ts_value):
-                    entry[column] = row[column]
-                    entry[ts_column] = ts_value
-                else:
-                    entry[column] = "⚪ Watching"
-                    entry[ts_column] = "—"
+                entry[column] = row[column]
+                entry[ts_column] = row.get(ts_column, "—")
 
             rows.append(entry)
 
@@ -2882,6 +2882,32 @@ def _signal_is_fresh(when_text):
     age_days = (time_utils.now_cet().replace(tzinfo=None) - parsed).days
 
     return age_days < MAX_SIGNAL_AGE_DAYS
+
+
+def _blank_stale_signal(df, column, ts_column):
+    """
+    Blanks a signal reading back to "⚪ Watching"/"—" once its
+    timestamp is more than MAX_SIGNAL_AGE_DAYS old. Called once, right
+    at the scan that produces `column`/`ts_column` (see
+    _scan_global_indices_data/_scan_universe_data below) - NOT
+    per-consumer. An earlier pass only filtered this inside Command
+    Center's own "Everything Found" table, which fixed that one view
+    but left the identical stale reading (e.g. a 29-day-old "Alert
+    (LONG)" - ALERT_LONG/ALERT_SHORT has no invalidation rule and can
+    sit unconfirmed for weeks) showing unfiltered on the Global Indices
+    tab itself, since that tab's Scanner table reads the same cached
+    df directly. Blanking at the source means every reader (the tab's
+    own table, both Command Center tables, CEO Summary/conviction
+    ranking) sees the same already-filtered picture with no separate
+    fix needed per screen.
+    """
+
+    if column not in df.columns or ts_column not in df.columns:
+        return
+
+    stale = ~df[ts_column].apply(_signal_is_fresh)
+    df.loc[stale, column] = "⚪ Watching"
+    df.loc[stale, ts_column] = "—"
 
 
 def _command_center_timeframe(base_timeframe, why_text):
