@@ -20,6 +20,8 @@ from dashboard.services.stock_news_service import StockNewsService
 
 MACRO_NEWS_TICKERS = ["^GSPC", "^NDX", "^VIX", "GC=F", "CL=F", "DX-Y.NYB"]
 
+MAX_AGE_DAYS = 2   # older than this isn't "what's moving markets today" anymore
+
 
 def _parse_pub_date(pub_date):
 
@@ -30,6 +32,14 @@ def _parse_pub_date(pub_date):
         return datetime.fromisoformat(str(pub_date).replace("Z", "+00:00"))
     except ValueError:
         return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _is_recent(item):
+    """A missing/unparseable pub_date can't be confirmed recent, so it's treated as stale, same as a genuinely old one."""
+
+    age = datetime.now(timezone.utc) - _parse_pub_date(item.get("pub_date"))
+
+    return age.days < MAX_AGE_DAYS
 
 
 def scan(limit=10, limit_per_ticker=3):
@@ -47,6 +57,11 @@ def scan(limit=10, limit_per_ticker=3):
     NASDAQ today"), instead of the flat feed's "here are 10 recent
     macro headlines, good luck guessing which one explains today's
     move."
+
+    Anything older than MAX_AGE_DAYS is dropped before dedup/sorting -
+    a multi-day-old story isn't "what's moving markets today" anymore,
+    and letting it sit in the feed just crowds out genuinely fresh
+    headlines once the market's been quiet for a day or two.
     """
 
     seen_titles = set()
@@ -56,7 +71,7 @@ def scan(limit=10, limit_per_ticker=3):
     for ticker in MACRO_NEWS_TICKERS:
 
         ticker_items = sorted(
-            StockNewsService.latest(ticker, limit=5),
+            (item for item in StockNewsService.latest(ticker, limit=5) if _is_recent(item)),
             key=lambda item: _parse_pub_date(item.get("pub_date")),
             reverse=True,
         )

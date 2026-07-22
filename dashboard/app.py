@@ -3297,6 +3297,7 @@ def _render_market_moving_news():
 def _render_top_news():
 
     st.markdown("**📰 Top News**")
+    st.caption(f"Last {macro_news.MAX_AGE_DAYS} days only - older stories are dropped automatically.")
 
     cache_entry = universe_cache.get("macro_news")
 
