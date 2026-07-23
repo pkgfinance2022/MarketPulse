@@ -3332,7 +3332,13 @@ def _render_top_news():
 def _render_economic_calendar():
 
     st.markdown("**📅 Economic Calendar — Next 21 Days**")
-    st.caption("FOMC decisions, US CPI, and US Nonfarm Payrolls - the recurring events that reliably move every asset class here. From published Fed/BLS schedules, not a live feed.")
+    st.caption(
+        "FOMC decisions, US CPI, US Nonfarm Payrolls, and weekly US Initial Jobless Claims - the recurring "
+        "events that reliably move every asset class here. From published Fed/BLS schedules, not a live feed - "
+        "and, by design, only scheduled releases: a breaking event like a geopolitical escalation or an oil "
+        "supply shock can move markets just as much but can't appear on any calendar in advance. See 🔥 What's "
+        "Moving Markets Today (News tab) for that kind of same-day driver instead."
+    )
 
     events = economic_calendar.upcoming(days=21)
 
@@ -3344,6 +3350,27 @@ def _render_economic_calendar():
         events.assign(Date=events["Date"].dt.strftime("%b %d (%a)"))[["Date", "Event", "Importance", "Notes"]],
         use_container_width=True, hide_index=True, key="dmo_econ_calendar",
     )
+
+    # Detail for what's actually coming up next, not just a name and a
+    # date - one expander per distinct event type among the next few
+    # rows, so "FOMC Decision, Jul 29" reads as "why this matters and
+    # what tends to move" instead of requiring a separate lookup.
+    seen_types = set()
+
+    for _, row in events.head(5).iterrows():
+
+        if row["Event"] in seen_types:
+            continue
+
+        seen_types.add(row["Event"])
+        detail = economic_calendar.detail_for(row["Event"])
+
+        if not detail:
+            continue
+
+        with st.expander(f"ℹ️ {row['Event']} — {row['Date'].strftime('%b %d')}"):
+            st.markdown(f"**What it is:** {detail['what']}")
+            st.markdown(f"**What to watch:** {detail['watch']}")
 
 
 @st.fragment(run_every=45)
