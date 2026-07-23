@@ -65,7 +65,7 @@
   "BRITANNIA.NS:weekly": "WATCHING",
   "BSE.NS:daily": "WATCHING",
   "BSE.NS:weekly": "WATCHING",
-  "BTC-USD:daily": "SELL_SIGNAL",
+  "BTC-USD:daily": "WATCHING",
   "BTC-USD:reversal_1h": "WATCHING",
   "BTC-USD:wave": "ALERT_LONG",
   "BTC-USD:weekly": "WATCHING",
