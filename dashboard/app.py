@@ -3472,22 +3472,34 @@ OVERVIEW_SECTIONS = ["🎯 Command Center", "🔥 Highest Conviction", "🔔 Not
 def render_overview_tab():
     """
     Every "what's actionable / what already happened" view in one tab,
-    switched via a sub-selector rather than one long scroll - Command
+    switched via nested st.tabs() rather than one long scroll - Command
     Center's Best Found/Everything Found/Movers, the ranked Highest
     Conviction picks, the Notifications feed + Alert Tracking, and the
     7-day Weekly Report digest.
+
+    st.tabs() deliberately over st.radio() - switching a radio widget
+    is a normal widget interaction, which triggers a FULL top-level
+    script rerun (this function isn't itself a fragment - see below
+    for why), re-executing everything on the page, not just this
+    section - a real, reported bug ("clicking US Stocks shows loading,
+    then clicking elsewhere leaves the UI greyed out"). Tab switching
+    is pure client-side CSS with no rerun at all, same as the
+    top-level tabs in main() - switching sections here is now instant
+    regardless of how long a full rerun would otherwise take.
     """
 
-    section = st.radio("View", OVERVIEW_SECTIONS, horizontal=True, key="overview_section")
-    st.divider()
+    tab_cc, tab_hc, tab_notif, tab_weekly = st.tabs(OVERVIEW_SECTIONS)
 
-    if section == "🎯 Command Center":
+    with tab_cc:
         render_command_center_tab()
-    elif section == "🔥 Highest Conviction":
+
+    with tab_hc:
         _render_highest_conviction()
-    elif section == "🔔 Notifications":
+
+    with tab_notif:
         render_notifications_tab()
-    else:
+
+    with tab_weekly:
         render_weekly_report_tab()
 
 
@@ -3506,24 +3518,32 @@ STOCKS_SECTIONS = ["🇺🇸 US Stocks", "🇮🇳 Indian Stocks", "💰 Fundame
 
 def render_stocks_tab():
     """
-    Every individual-equity view in one tab, switched via a
-    sub-selector - US/India's own Hourly-excluded Daily+Weekly tables,
+    Every individual-equity view in one tab, switched via nested
+    st.tabs() - US/India's own Hourly-excluded Daily+Weekly tables,
     the on-demand Fundamental scanner, the passive weekly Fundamentals
     Insights briefing, and Algo Test's "check any symbol" utility.
+
+    st.tabs() deliberately over st.radio() - see render_overview_tab's
+    docstring for why (a real reported bug: switching this via a radio
+    widget triggered a full top-level rerun, leaving the UI visibly
+    greyed out/stuck while it re-executed the entire page).
     """
 
-    section = st.radio("View", STOCKS_SECTIONS, horizontal=True, key="stocks_section")
-    st.divider()
+    tab_us, tab_india, tab_fund, tab_fund_insights, tab_algo = st.tabs(STOCKS_SECTIONS)
 
-    if section == "🇺🇸 US Stocks":
+    with tab_us:
         render_universe_tab("us", "USA", "🇺🇸 US Stocks")
-    elif section == "🇮🇳 Indian Stocks":
+
+    with tab_india:
         render_universe_tab("india", "India", "🇮🇳 Indian Stocks")
-    elif section == "💰 Fundamentals":
+
+    with tab_fund:
         render_fundamentals_tab()
-    elif section == "🧠 Fundamentals Insights":
+
+    with tab_fund_insights:
         render_fundamental_insights_tab()
-    else:
+
+    with tab_algo:
         render_algo_test_tab()
 
 
