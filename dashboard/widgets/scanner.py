@@ -377,7 +377,28 @@ class Scanner:
         `columns` overrides both of the above with an exact column
         list, for callers that want a specific timeframe's table (e.g.
         just the Daily columns) rather than either preset.
+
+        The global "Compact tables" toggle (see Header.render) applies
+        on top of whichever column set was chosen: every real call
+        site in this app already passes an explicit, pre-curated
+        `columns` list (FULL_COLUMNS/COMPACT_COLUMNS are effectively
+        unused in practice) - so shrinking further for mobile means
+        dropping columns from THAT list, not falling back to a preset
+        that never applies. The "*Timestamp" columns are the
+        consistent, generic target across every curated list (Setup
+        Timestamp, Reversal Timestamp, Daily Reversal Timestamp,
+        Weekly Timestamp) - long text ("Jul 17, 3 PM CET - 4d ago")
+        that's secondary detail once the signal label itself already
+        shows what fired, and the single biggest reason these tables
+        don't fit a phone screen without horizontal scroll.
         """
+
+        if st.session_state.get("compact_tables"):
+
+            if columns is not None:
+                columns = [c for c in columns if not c.endswith("Timestamp")]
+
+            compact = True
 
         if df.empty:
             st.warning("No assets found.")
