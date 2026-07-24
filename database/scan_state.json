@@ -88,7 +88,7 @@
   "CIPLA.NS:daily": "WATCHING",
   "CIPLA.NS:weekly": "WATCHING",
   "CL=F:reversal_1h": "WATCHING",
-  "CL=F:wave": "ALERT_SHORT",
+  "CL=F:wave": "ENTRY_SHORT",
   "CLEAN.NS:daily": "WATCHING",
   "CLEAN.NS:weekly": "WATCHING",
   "CME:daily": "BUY_ALERT",
