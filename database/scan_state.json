@@ -344,7 +344,7 @@
   "SCI.NS:daily": "WATCHING",
   "SCI.NS:weekly": "WATCHING",
   "SI=F:reversal_1h": "WATCHING",
-  "SI=F:wave": "WAVE_SHORT",
+  "SI=F:wave": "WATCHING",
   "SIEMENS.NS:daily": "WATCHING",
   "SIEMENS.NS:weekly": "WATCHING",
   "SJVN.NS:daily": "WATCHING",
