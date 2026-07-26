@@ -1362,7 +1362,16 @@ def render_notifications_feed():
                 if pd.notna(row.get("Stop")):
                     levels = f" · Stop {row['Stop']} · Target {row['Target1']}"
 
-                st.caption(f"Price {row['EntryPrice']} · RSI {row['RSI']}{levels}")
+                # RSI is genuinely absent (not a failed calculation) for
+                # Chart Pattern alerts (Piercing Pattern/Double Bottom) -
+                # those are candlestick-shape signals, not RSI-based (see
+                # analysis/candlestick_patterns.py) - AlertLog.claim_if_new
+                # is called with rsi=None for them by design. Showing it
+                # unconditionally rendered a literal "RSI nan" for every
+                # one of those alerts - a real, reported bug.
+                rsi_part = f" · RSI {row['RSI']}" if pd.notna(row.get("RSI")) else ""
+
+                st.caption(f"Price {row['EntryPrice']}{rsi_part}{levels}")
 
             with time_col:
                 st.caption(_humanize_alert_age(row["_ts"]))
