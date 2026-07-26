@@ -3333,11 +3333,12 @@ def _render_economic_calendar():
 
     st.markdown("**📅 Economic Calendar — Next 21 Days**")
     st.caption(
-        "FOMC decisions, US CPI, US Nonfarm Payrolls, and weekly US Initial Jobless Claims - the recurring "
-        "events that reliably move every asset class here. From published Fed/BLS schedules, not a live feed - "
-        "and, by design, only scheduled releases: a breaking event like a geopolitical escalation or an oil "
-        "supply shock can move markets just as much but can't appear on any calendar in advance. See 🔥 What's "
-        "Moving Markets Today (News tab) for that kind of same-day driver instead."
+        "FOMC decisions, US CPI/PPI, Nonfarm Payrolls, Retail Sales, ISM Manufacturing/Services PMI, and weekly "
+        "US Initial Jobless Claims - the recurring events that reliably move every asset class here. From "
+        "published Fed/BLS/Census schedules, not a live feed - and, by design, only scheduled releases: a "
+        "breaking event like a geopolitical escalation or an oil supply shock can move markets just as much but "
+        "can't appear on any calendar in advance. See 🔥 What's Moving Markets Today (News tab) for that kind of "
+        "same-day driver instead."
     )
 
     events = economic_calendar.upcoming(days=21)

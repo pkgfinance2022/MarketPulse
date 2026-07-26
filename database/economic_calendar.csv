@@ -1,33 +1,59 @@
 Date,Event,Importance,Notes
 2026-01-09,US Nonfarm Payrolls,High,December 2025 employment data
 2026-01-13,US CPI,High,December 2025 inflation data
+2026-01-14,US PPI,High,November 2025 producer price data
+2026-01-14,US Retail Sales,Medium,November 2025 retail sales data
 2026-01-28,FOMC Decision,High,"Jan 27-28 meeting; no SEP"
+2026-01-30,US PPI,High,December 2025 producer price data
 2026-02-06,US Nonfarm Payrolls,High,January 2026 employment data
+2026-02-10,US Retail Sales,Medium,December 2025 retail sales data
 2026-02-13,US CPI,High,January 2026 inflation data
+2026-02-27,US PPI,High,January 2026 producer price data
 2026-03-06,US Nonfarm Payrolls,High,February 2026 employment data
+2026-03-06,US Retail Sales,Medium,January 2026 retail sales data
 2026-03-11,US CPI,High,February 2026 inflation data
 2026-03-18,FOMC Decision,High,"Mar 17-18 meeting; includes Summary of Economic Projections (dot plot)"
+2026-03-18,US PPI,High,February 2026 producer price data
+2026-04-01,US Retail Sales,Medium,February 2026 retail sales data
 2026-04-03,US Nonfarm Payrolls,High,March 2026 employment data
 2026-04-10,US CPI,High,March 2026 inflation data
+2026-04-14,US PPI,High,March 2026 producer price data
+2026-04-21,US Retail Sales,Medium,"March 2026 retail sales data - rescheduled from Apr 16"
 2026-04-29,FOMC Decision,High,"Apr 28-29 meeting; no SEP"
 2026-05-08,US Nonfarm Payrolls,High,April 2026 employment data
 2026-05-12,US CPI,High,April 2026 inflation data
+2026-05-13,US PPI,High,April 2026 producer price data
+2026-05-14,US Retail Sales,Medium,April 2026 retail sales data
 2026-06-05,US Nonfarm Payrolls,High,May 2026 employment data
 2026-06-10,US CPI,High,May 2026 inflation data
+2026-06-11,US PPI,High,May 2026 producer price data
 2026-06-17,FOMC Decision,High,"Jun 16-17 meeting; includes Summary of Economic Projections (dot plot)"
+2026-06-17,US Retail Sales,Medium,May 2026 retail sales data
 2026-07-02,US Nonfarm Payrolls,High,June 2026 employment data
 2026-07-14,US CPI,High,June 2026 inflation data
+2026-07-15,US PPI,High,June 2026 producer price data
+2026-07-16,US Retail Sales,Medium,June 2026 retail sales data
 2026-07-29,FOMC Decision,High,"Jul 28-29 meeting; no SEP"
 2026-08-07,US Nonfarm Payrolls,High,July 2026 employment data
 2026-08-12,US CPI,High,July 2026 inflation data
+2026-08-13,US PPI,High,July 2026 producer price data
+2026-08-14,US Retail Sales,Medium,July 2026 retail sales data
 2026-09-04,US Nonfarm Payrolls,High,August 2026 employment data
+2026-09-10,US PPI,High,August 2026 producer price data
 2026-09-11,US CPI,High,August 2026 inflation data
 2026-09-16,FOMC Decision,High,"Sep 15-16 meeting; includes Summary of Economic Projections (dot plot)"
+2026-09-16,US Retail Sales,Medium,August 2026 retail sales data
 2026-10-02,US Nonfarm Payrolls,High,September 2026 employment data
 2026-10-14,US CPI,High,September 2026 inflation data
+2026-10-15,US PPI,High,September 2026 producer price data
+2026-10-15,US Retail Sales,Medium,September 2026 retail sales data
 2026-10-28,FOMC Decision,High,"Oct 27-28 meeting; no SEP"
 2026-11-06,US Nonfarm Payrolls,High,October 2026 employment data
 2026-11-10,US CPI,High,October 2026 inflation data
+2026-11-13,US PPI,High,October 2026 producer price data
+2026-11-17,US Retail Sales,Medium,October 2026 retail sales data
 2026-12-04,US Nonfarm Payrolls,High,November 2026 employment data
 2026-12-09,FOMC Decision,High,"Dec 8-9 meeting; includes Summary of Economic Projections (dot plot)"
 2026-12-10,US CPI,High,November 2026 inflation data
+2026-12-15,US PPI,High,November 2026 producer price data
+2026-12-16,US Retail Sales,Medium,November 2026 retail sales data
