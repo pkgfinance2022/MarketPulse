@@ -943,13 +943,15 @@ def _refresh_global_indices(sector):
 
         st.session_state[seen_ts_key] = cache_entry["ts"]
 
-    last_loaded = cache_entry["ts"]
-    age_minutes = round((time.time() - last_loaded) / 60)
-    refreshed_at = time_utils.unix_to_cet(last_loaded).strftime("%H:%M:%S CET")
+    freshness = time_utils.scan_freshness(cache_entry["ts"])
 
-    if cache_entry["loading"]:
+    if freshness is None:
+        st.caption("🕐 A fresh scan was just triggered - refreshing now...")
+    elif cache_entry["loading"]:
+        refreshed_at, age_minutes = freshness
         st.caption(f"🕐 Showing data from {refreshed_at} ({age_minutes} min ago) — 🔄 a fresh scan is running in the background, {_scan_eta_text(cache_entry)}.")
     else:
+        refreshed_at, age_minutes = freshness
         st.caption(f"🕐 Last refreshed at {refreshed_at} ({age_minutes} min ago) — refreshes automatically every {GLOBAL_INDICES_REFRESH_SECONDS // 60} min, or click Scan Now above.")
 
 
@@ -2319,12 +2321,15 @@ def _refresh_universe_body(prefix, country):
         _persist_notify_baseline()
 
     last_loaded = st.session_state[f"{prefix}_last_loaded_ts"]
-    age_minutes = round((time.time() - last_loaded) / 60)
-    refreshed_at = time_utils.unix_to_cet(last_loaded).strftime("%H:%M:%S CET")
+    freshness = time_utils.scan_freshness(last_loaded)
 
-    if cache_entry["loading"]:
+    if freshness is None:
+        st.caption("🕐 A fresh scan was just triggered - refreshing now...")
+    elif cache_entry["loading"]:
+        refreshed_at, age_minutes = freshness
         st.caption(f"🕐 Showing data from {refreshed_at} ({age_minutes} min ago) — 🔄 a fresh scan is running in the background, {_scan_eta_text(cache_entry)}, and will swap in automatically once done.")
     else:
+        refreshed_at, age_minutes = freshness
         st.caption(f"🕐 Last refreshed at {refreshed_at} ({age_minutes} min ago) — refreshes automatically every hour, or click Scan Now above.")
 
 
@@ -2681,16 +2686,23 @@ def _freshness_caption(sources):
     (which has always shown "Last refreshed at ..."). Without it,
     there was no way to tell - short of asking - whether a number on
     screen reflected a check from 2 minutes ago or 2 hours ago.
+
+    A source's ts is falsy (0) right after "Refresh Everything"
+    (universe_cache.force_clear_all() resets it as a staleness signal,
+    while leaving that source's old `data` in place) until its next
+    scan actually completes - treated the same as a missing source
+    here (excluded from the "oldest" pick) rather than let a literal
+    `time.time() - 0` produce a multi-decade-old nonsense age, a real
+    reported bug.
     """
 
-    valid = [(label, ts) for label, ts in sources if ts is not None]
+    valid = [(label, ts) for label, ts in sources if ts]
 
     if not valid:
         return
 
     label, oldest_ts = min(valid, key=lambda pair: pair[1])
-    age_minutes = round((time.time() - oldest_ts) / 60)
-    refreshed_at = time_utils.unix_to_cet(oldest_ts).strftime("%H:%M:%S CET")
+    refreshed_at, age_minutes = time_utils.scan_freshness(oldest_ts)
 
     if len(valid) > 1:
         st.caption(f"🕐 Data as of {refreshed_at} ({age_minutes} min ago) - oldest source: {label}")
@@ -4681,13 +4693,15 @@ def render_ema_proximity_tab():
         started = universe_cache.start_scan("ema_proximity", _scan_ema_proximity_data, pool="ema_proximity")
         st.toast("Rescanning in the background..." if started else "Already scanning in the background...", icon="🔄")
 
-    last_ts = cache_entry["ts"]
-    age_minutes = round((time.time() - last_ts) / 60)
-    refreshed_at = time_utils.unix_to_cet(last_ts).strftime("%b %d, %H:%M CET")
+    freshness = time_utils.scan_freshness(cache_entry["ts"], date_format="%b %d, %H:%M CET")
 
-    if cache_entry["loading"]:
+    if freshness is None:
+        st.caption("🕐 A fresh scan was just triggered - refreshing now...")
+    elif cache_entry["loading"]:
+        refreshed_at, age_minutes = freshness
         st.caption(f"🕐 Showing data from {refreshed_at} ({age_minutes} min ago) — a fresh scan is running in the background.")
     else:
+        refreshed_at, age_minutes = freshness
         st.caption(f"🕐 Last scanned: {refreshed_at} ({age_minutes} min ago) — refreshes automatically once a day.")
 
     rows = cache_entry["data"]["rows"]

@@ -10,6 +10,7 @@ deployment host). "Europe/Berlin" tracks CET/CEST with DST handled
 automatically, unlike a fixed UTC+1 offset.
 """
 
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -26,6 +27,29 @@ def unix_to_cet(epoch_seconds):
     """Converts a time.time()-style Unix timestamp to a CET datetime."""
 
     return datetime.fromtimestamp(epoch_seconds, tz=CET)
+
+
+def scan_freshness(ts, date_format="%H:%M:%S CET"):
+    """
+    (refreshed_at_str, age_minutes) for a universe_cache scan
+    timestamp, or None if `ts` is falsy (0 or None) - a real, reported
+    bug: universe_cache.force_clear_all() (the "Refresh Everything"
+    button) deliberately resets a source's ts to 0 as a staleness
+    signal for its OWN re-scan-trigger check, but that 0 is not a real
+    past completion time - reading it back as `time.time() - 0` produces
+    a multi-decade-old nonsense age ("29751732 min ago") until that
+    source's next scan actually completes and overwrites it with a
+    real timestamp. Callers should show a "refreshing" fallback instead
+    of the age/timestamp text when this returns None.
+    """
+
+    if not ts:
+        return None
+
+    age_minutes = round((time.time() - ts) / 60)
+    refreshed_at = unix_to_cet(ts).strftime(date_format)
+
+    return refreshed_at, age_minutes
 
 
 def to_cet(ts):
