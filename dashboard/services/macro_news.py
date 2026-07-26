@@ -5,20 +5,46 @@ moving markets today" headline feed, instead of per-stock news which
 is already covered by StockNewsService for a single ticker you've
 picked.
 
-Deliberately a small, fixed ticker list (broad US equity benchmarks,
-vol, gold, oil, dollar) rather than the whole universe - the same
-"too noisy, too expensive to pull for 200+ symbols" reasoning
-StockNewsService already documents, but for a handful of macro proxies
-whose news feed tends to carry genuinely market-wide stories (Fed
-policy, geopolitical events, macro data) rather than single-company
-news.
+Deliberately a small, fixed ticker list rather than the whole universe
+- the same "too noisy, too expensive to pull for 200+ symbols"
+reasoning StockNewsService already documents - but chosen to span a
+real "Tier 1/Tier 2 market-moving event" taxonomy (explicit request):
+Fed policy/yields, inflation/growth data, and geopolitics/oil surface
+through the benchmark-index and macro-proxy tickers' own news feeds
+(confirmed empirically - e.g. an Iran/Houthi oil-tanker attack story
+was already tagged under CL=F's feed the same day it broke); Big
+Tech earnings and sector stories (AI, banking, strategic commodities)
+need their own tickers added explicitly since those stories don't
+reliably surface under a benchmark index's feed on their own.
+
+Only ^GSPC/^NDX/^VIX/GC=F/CL=F/DX-Y.NYB/^TNX feed the "What's Moving
+Markets Today" mover-ranked section (see app.py's
+_render_market_moving_news) - that needs a same-day Change % from the
+Global Indices scan, which only covers macro/index instruments, not
+individual stocks or sector ETFs. The rest (Big Tech, banking,
+strategic commodities) only ever appear in the flat "Top News" feed -
+a real, accepted scope limit, not an oversight.
 """
 
 from datetime import datetime, timezone
 
 from dashboard.services.stock_news_service import StockNewsService
 
-MACRO_NEWS_TICKERS = ["^GSPC", "^NDX", "^VIX", "GC=F", "CL=F", "DX-Y.NYB"]
+MACRO_NEWS_TICKERS = [
+    # Broad market + Fed/yields/inflation/geopolitics proxies - also
+    # feed the mover-ranked "What's Moving Markets Today" section.
+    "^GSPC", "^NDX", "^VIX", "GC=F", "CL=F", "DX-Y.NYB", "^TNX",
+    # Europe/ECB proxy.
+    "EURUSD=X",
+    # Tier 1 commodities beyond oil/gold.
+    "NG=F",
+    # Tier 2 - strategic/sector commodities.
+    "URA", "LIT", "REMX",
+    # Tier 2 - banking.
+    "XLF",
+    # Tier 2 - Big Tech earnings (outsized weight in NASDAQ/S&P).
+    "NVDA", "MSFT", "AAPL", "AMZN", "GOOGL", "META", "TSLA",
+]
 
 MAX_AGE_DAYS = 2   # older than this isn't "what's moving markets today" anymore
 
