@@ -161,7 +161,16 @@ def send_alert(name, ticker, label, direction, price, rsi, stop_target, timefram
     print(f"ALERT: {message}")
 
     if TelegramNotifier.is_configured():
-        TelegramNotifier.send(message)
+        # TelegramNotifier.send() is deliberately best-effort (swallows
+        # its own errors so a Telegram outage never crashes the scan) -
+        # but that means a bad/expired token, wrong chat_id, or a
+        # Telegram API error was previously completely invisible: the
+        # job still reports success (the alert IS correctly logged to
+        # AlertLog either way), while nothing actually reaches the
+        # phone. Printed explicitly so a real delivery failure shows up
+        # in the GitHub Actions run log instead of silently vanishing.
+        if not TelegramNotifier.send(message):
+            print("WARNING: Telegram send failed (bad/expired credentials, or a Telegram API error) - alert logged here only, nothing was pushed.")
     else:
         print("Telegram not configured (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID missing) - alert logged here only.")
 
