@@ -137,7 +137,7 @@
   "ETERNAL.NS:weekly": "WATCHING",
   "ETN:daily": "WATCHING",
   "ETN:weekly": "WATCHING",
-  "EURUSD=X:reversal_1h": "SELL_SIGNAL_CONTINUATION",
+  "EURUSD=X:reversal_1h": "WATCHING",
   "EURUSD=X:wave": "WAVE_SHORT",
   "FCX:daily": "WATCHING",
   "FCX:weekly": "WATCHING",
