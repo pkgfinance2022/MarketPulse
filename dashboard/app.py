@@ -1452,6 +1452,70 @@ def render_global_indices_live():
 
                 st.success(f"Parked {daily_reversal['direction']} {selected} @ {daily_reversal['price']}")
 
+        st.divider()
+        st.subheader(f"🌊 {selected} — EMA20 Reclaim (1H) · Path A")
+
+        ema_reclaim = EMAReclaimStatusService.analyse(selected)
+
+        if ema_reclaim is None:
+            st.info("Not enough 1H history to evaluate this instrument yet.")
+        else:
+            st.info(ema_reclaim["description"])
+
+        if ema_reclaim and ema_reclaim["direction"] and ema_reclaim["stop_target"]:
+
+            er_target = ema_reclaim["stop_target"]
+
+            cols = st.columns(5)
+            cols[0].metric("Direction", ema_reclaim["direction"])
+            cols[1].metric("Entry", round(ema_reclaim["price"], 4))
+            cols[2].metric("Stop", er_target["stop"])
+            cols[3].metric("Target", er_target["target1"])
+            cols[4].metric("Risk:Reward", f"1:{er_target['risk_reward']}")
+
+            ema_reclaim_notes = st.text_input("Notes (optional)", key=f"global_ema_reclaim_notes_{selected}")
+
+            if st.button("📌 Park this trade", key=f"global_ema_reclaim_park_btn_{selected}"):
+
+                TradeJournal.park(
+                    selected, ema_reclaim["direction"], round(ema_reclaim["price"], 4), er_target,
+                    ema_reclaim["state"], ema_reclaim["rsi"], notes=ema_reclaim_notes,
+                )
+
+                st.success(f"Parked {ema_reclaim['direction']} {selected} @ {round(ema_reclaim['price'], 4)}")
+
+        st.divider()
+        st.subheader(f"🌊 {selected} — EMA20 Reclaim (Daily) · Path A")
+
+        daily_ema_reclaim = DailyEMAReclaimStatusService.analyse(selected)
+
+        if daily_ema_reclaim is None:
+            st.info("Not enough Daily history to evaluate this instrument yet.")
+        else:
+            st.info(daily_ema_reclaim["description"])
+
+        if daily_ema_reclaim and daily_ema_reclaim["direction"] and daily_ema_reclaim["stop_target"]:
+
+            der_target = daily_ema_reclaim["stop_target"]
+
+            cols = st.columns(5)
+            cols[0].metric("Direction", daily_ema_reclaim["direction"])
+            cols[1].metric("Entry", round(daily_ema_reclaim["price"], 4))
+            cols[2].metric("Stop", der_target["stop"])
+            cols[3].metric("Target", der_target["target1"])
+            cols[4].metric("Risk:Reward", f"1:{der_target['risk_reward']}")
+
+            daily_ema_reclaim_notes = st.text_input("Notes (optional)", key=f"global_daily_ema_reclaim_notes_{selected}")
+
+            if st.button("📌 Park this trade", key=f"global_daily_ema_reclaim_park_btn_{selected}"):
+
+                TradeJournal.park(
+                    selected, daily_ema_reclaim["direction"], round(daily_ema_reclaim["price"], 4), der_target,
+                    daily_ema_reclaim["state"], daily_ema_reclaim["rsi"], notes=daily_ema_reclaim_notes,
+                )
+
+                st.success(f"Parked {daily_ema_reclaim['direction']} {selected} @ {round(daily_ema_reclaim['price'], 4)}")
+
 
 def render_parked_trades():
 
