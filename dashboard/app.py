@@ -43,6 +43,8 @@ from dashboard.services.reversal_status_daily import DailyReversalStatusService
 from analysis.ema_proximity import PROXIMITY_TOLERANCE_PCT
 from dashboard.services.cross_asset_status import CrossAssetStatusService, CROSS_ASSET_TARGETS
 from dashboard.services.ema_proximity_status import EMAProximityStatusService
+from dashboard.services.ema_reclaim_status import EMAReclaimStatusService
+from analysis.ema_reclaim_strategy import EMAReclaimStrategy
 from dashboard.services.pattern_status import ChartPatternStatusService, PATTERN_STATE_LABELS
 from dashboard.services.performance_ranking_status import PerformanceRankingStatusService
 from dashboard.services.rsi_divergence_status import RSIDivergenceStatusService
@@ -124,7 +126,7 @@ def _scan_eta_text(cache_entry):
 _format_event_time = time_utils.format_event_time
 
 
-NOTIFY_BASELINE_KEYS = ["wave_states", "wave_states_seeded", "reversal_states", "reversal_states_seeded", "divergence_states", "divergence_states_seeded", "pattern_states", "pattern_states_seeded"]
+NOTIFY_BASELINE_KEYS = ["wave_states", "wave_states_seeded", "reversal_states", "reversal_states_seeded", "divergence_states", "divergence_states_seeded", "pattern_states", "pattern_states_seeded", "ema_reclaim_states", "ema_reclaim_states_seeded"]
 
 for _prefix, _country, _title in [("us", None, None), ("india", None, None), ("crypto", None, None)]:
     NOTIFY_BASELINE_KEYS += [
@@ -162,6 +164,8 @@ def init_state():
         "divergence_states_seeded": persisted.get("divergence_states_seeded", False),
         "pattern_states": persisted.get("pattern_states", {}),
         "pattern_states_seeded": persisted.get("pattern_states_seeded", False),
+        "ema_reclaim_states": persisted.get("ema_reclaim_states", {}),
+        "ema_reclaim_states_seeded": persisted.get("ema_reclaim_states_seeded", False),
         "fundamental_scan_result": None,
     }
 
@@ -695,6 +699,101 @@ def check_for_new_pattern_signals():
     render_notification_trigger(browser_entries)
 
 
+@st.fragment(run_every=300)
+def check_for_new_ema_reclaim_signals():
+    """
+    Same pattern as check_for_new_pattern_signals() - Global Indices
+    only, LONG-only (see analysis/ema_reclaim_strategy.py). Narrower
+    trigger than pattern signals' "any non-Watching state" though:
+    EMAReclaimStrategy has real intermediate stages (PULLBACK,
+    RECLAIM_ALERT) that aren't actionable on their own - only a fresh
+    transition INTO "ENTRY_LONG" (the confirmed, 2nd-consecutive-close
+    reclaim) is actually worth a push notification.
+    """
+
+    market = st.session_state.global_market
+
+    if market is None:
+        return
+
+    tickers = market["df"]["Ticker"].tolist()
+    name_map = dict(zip(market["df"]["Ticker"], market["df"]["Name"]))
+
+    current_states = EMAReclaimStatusService.screen_states(tickers)
+    previous_states = st.session_state.ema_reclaim_states
+    is_first_check = not st.session_state.ema_reclaim_states_seeded
+
+    new_signals = (
+        []
+        if is_first_check
+        else [
+            {
+                "ticker": ticker,
+                "name": name_map.get(ticker, ticker),
+                "state": info["state"],
+                "price": info["price"],
+            }
+            for ticker, info in current_states.items()
+            if info["state"] == "ENTRY_LONG"
+            and (previous_states.get(ticker) or {}).get("state") != "ENTRY_LONG"
+        ]
+    )
+
+    st.session_state.ema_reclaim_states = current_states
+    st.session_state.ema_reclaim_states_seeded = True
+    _persist_notify_baseline()
+
+    browser_entries = []
+
+    for signal in new_signals:
+
+        signal_label = EMAReclaimStrategy.STATE_LABELS.get(signal["state"], signal["state"])
+
+        full_status = EMAReclaimStatusService.analyse(signal["ticker"])
+        stop_target = full_status["stop_target"] if full_status else None
+
+        # Atomic check-and-log - see AlertLog.claim_if_new() /
+        # check_for_new_entries().
+        if not AlertLog.claim_if_new(
+            signal["ticker"], "LONG", signal["name"], signal["price"], None, stop_target,
+            source="Global Indices", signal_type="EMA Reclaim",
+        ):
+            continue
+
+        price = round(signal["price"], 4) if signal["price"] is not None else "?"
+        event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
+
+        levels = (
+            f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
+            if stop_target and stop_target.get("stop") is not None
+            else ""
+        )
+
+        description = full_status["description"] if full_status else ""
+        message = (
+            f"🟢 {signal['name']} ({signal['ticker']}) — {signal_label}\n"
+            f"{event_time}\nPrice {price}{levels}\n{description}"
+        )
+
+        st.toast(f"{signal_label}: {signal['name']}", icon="🟢")
+
+        if TelegramNotifier.is_configured() and not TelegramNotifier.send(message):
+            print(f"WARNING: Telegram send failed for EMA Reclaim signal on {signal['ticker']}.")
+
+        browser_entries.append(
+            {
+                "ticker": signal["ticker"],
+                "name": signal["name"],
+                "direction": "LONG",
+                "price": signal["price"],
+                "rsi": None,
+                "stop_target": stop_target,
+            }
+        )
+
+    render_notification_trigger(browser_entries)
+
+
 GLOBAL_INDICES_REFRESH_SECONDS = 600   # faster than the universe tabs' hourly cadence (this is the "live, intraday" tab), but not so fast it re-fires the 4-engine scan pointlessly often
 
 # US market open (9:30 ET) usually lands at 15:30 CET, but shifts to 14:30
@@ -860,6 +959,18 @@ def _scan_global_indices_data(sector):
         df["Chart Patterns Full"] = df["Ticker"].map({t: info["description"] for t, info in pattern_states.items()}).fillna("")
         df["Chart Patterns Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in pattern_states.items()}).fillna("—")
         _blank_stale_signal(df, "Chart Patterns", "Chart Patterns Timestamp")
+
+        # EMA20 Reclaim (1H) - user's own real-chart observation: after
+        # a genuine down move, 2 consecutive closes above EMA20 tend to
+        # run to EMA200 (see analysis/ema_reclaim_strategy.py). Global
+        # Indices only - this is the exact instrument set it was
+        # backtested against before being added.
+        ema_reclaim_states = EMAReclaimStatusService.screen_states(tickers)
+        ema_reclaim_labels = {t: EMAReclaimStrategy.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in ema_reclaim_states.items()}
+        df["EMA Reclaim"] = df["Ticker"].map(ema_reclaim_labels).fillna("⚪ Watching")
+        df["EMA Reclaim Full"] = df["Ticker"].map({t: info["description"] for t, info in ema_reclaim_states.items()}).fillna("")
+        df["EMA Reclaim Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in ema_reclaim_states.items()}).fillna("—")
+        _blank_stale_signal(df, "EMA Reclaim", "EMA Reclaim Timestamp")
 
     else:
         divergence_states = {}
@@ -1072,7 +1183,7 @@ def render_global_indices_live():
     # needs-1H-confirm-first) - only symbols with something active in
     # THAT timeframe show up, instead of the full universe every time.
     df_15m = _only_active_rows(df, ["15m Setup"])
-    df_1h = _only_active_rows(df, ["Setup", "Reversal"])
+    df_1h = _only_active_rows(df, ["EMA Reclaim", "Setup", "Reversal"])
     df_1d = _only_active_rows(df, ["Daily Reversal", "Weekly"])
 
     if df_15m.empty:
@@ -1091,7 +1202,7 @@ def render_global_indices_live():
     else:
         ticker_1h = Scanner.render(
             df_1h, default_sort="Reversal", key_prefix="global_1h", compact=False,
-            columns=["Status", "Ticker", "Name", "Price", "1H %", "Setup", "Setup Timestamp", "Reversal", "Reversal Timestamp"],
+            columns=["Status", "Ticker", "Name", "Price", "1H %", "EMA Reclaim", "EMA Reclaim Timestamp", "Setup", "Setup Timestamp", "Reversal", "Reversal Timestamp"],
             title="🕐 Hourly", height=350,
         )
 
@@ -1833,6 +1944,7 @@ def render_global_indices_tab(meta):
     check_for_new_reversal_signals()
     check_for_new_divergence_signals()
     check_for_new_pattern_signals()
+    check_for_new_ema_reclaim_signals()
 
     st.divider()
     render_parked_trades()
@@ -2728,6 +2840,9 @@ COMMAND_CENTER_BUYSELL_SOURCES = [(label, key) for label, key in COMMAND_CENTER_
 
 COMMAND_CENTER_COLUMNS = [
     # column, full-text column, timestamp column, base timeframe, keywords that identify an "act now" label (vs. watching/alert/forming), style
+    # EMA Reclaim listed first per explicit instruction ("top of list") -
+    # see analysis/ema_reclaim_strategy.py.
+    ("EMA Reclaim", "EMA Reclaim Full", "EMA Reclaim Timestamp", "Hourly", ("entry",), "🔄 Reversal"),
     ("Setup", "Setup Full", "Setup Timestamp", "Hourly", ("entry",), "📈 Momentum"),
     ("Reversal", "Reversal Full", "Reversal Timestamp", "Hourly", ("signal", "trigger", "continuation"), "🔄 Reversal"),
     ("Daily Reversal", "Daily Reversal Full", "Daily Reversal Timestamp", "Daily", ("signal", "trigger", "continuation"), "🔄 Reversal"),
@@ -2777,6 +2892,7 @@ COMMAND_CENTER_HOURLY_SOURCES = [
 # the combined table above filters to).
 COMMAND_CENTER_TIMEFRAME_TABLES = [
     ("🕐 Hourly", "cc_hourly", [
+        ("EMA Reclaim", "EMA Reclaim Full", "EMA Reclaim Timestamp"),
         ("Setup", "Setup Full", "Setup Timestamp"),
         ("Reversal", "Reversal Full", "Reversal Timestamp"),
     ], COMMAND_CENTER_HOURLY_SOURCES),

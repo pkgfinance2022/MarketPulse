@@ -27,6 +27,15 @@ WIN_RATE_LOOKUP = {
     "RSI Divergence": {"win_rate": 29.2, "avg_return": -0.00, "n": 345},
     "Chart Patterns:Piercing Pattern": {"win_rate": 54.8, "avg_return": 0.76, "n": 32},
     "Chart Patterns:Double Bottom": {"win_rate": 77.0, "avg_return": 0.76, "n": 92},
+    # ~2 years, 9 Global Indices instruments (analysis/backtester.py's
+    # backtest_ema_reclaim). Win rate is real and matches the user's
+    # own read ("works most of the time"), but the down-move's-low
+    # stop is wide enough relative to the EMA200 target that avg
+    # return nets out barely positive - same shape as Setup (a high
+    # win rate that doesn't translate into a strong per-trade edge),
+    # included anyway per explicit instruction rather than withheld
+    # for a thin edge.
+    "EMA Reclaim": {"win_rate": 57.7, "avg_return": 0.01, "n": 941},
 }
 
 

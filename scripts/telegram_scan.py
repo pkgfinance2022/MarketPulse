@@ -44,9 +44,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from core.loader import AssetLoader
+from analysis.ema_reclaim_strategy import EMAReclaimStrategy
 from analysis.reversal_playbook import ReversalPlaybook
 from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
 from analysis.rsi_wave_strategy import RSIWaveStrategy
+from dashboard.services.ema_reclaim_status import EMAReclaimStatusService
 from dashboard.services.rsi_wave_status import RSIWaveStatusService
 from dashboard.services.telegram_notifier import TelegramNotifier
 from dashboard.services.alert_log import AlertLog
@@ -227,6 +229,34 @@ def check_hourly(ticker, name, state, is_first_run, source):
             send_alert(name, ticker, label, direction, last["price"], last["rsi"], levels, "Reversal Playbook 1H", desc, event_time, source=source, signal_type="Reversal 1H")
 
         state[key] = rev_state
+
+    # EMA20 Reclaim - Global Indices only, matches the exact instrument
+    # scope analysis/ema_reclaim_strategy.py was backtested against
+    # (not extended to Crypto/BTC-USD here, even though this same
+    # function also handles that source's own Hourly check).
+    if source == "Global Indices":
+
+        try:
+            ema_trace, _ = EMAReclaimStrategy.run_symbol(ticker)
+        except Exception as e:
+            print(f"  [EMA Reclaim] {ticker}: fetch failed ({e})")
+            ema_trace = None
+
+        if ema_trace:
+
+            desc, ema_state, event_time = EMAReclaimStrategy.describe(ema_trace)
+            key = f"{ticker}:ema_reclaim"
+            previous = state.get(key)
+
+            if ema_state == "ENTRY_LONG" and previous != "ENTRY_LONG" and not is_first_run:
+
+                last = ema_trace[-1]
+                status = EMAReclaimStatusService.analyse(ticker)
+                stop_target = status["stop_target"] if status else None
+
+                send_alert(name, ticker, "EMA20 Reclaim", "LONG", last["price"], last["rsi"], stop_target, "Hourly", desc, event_time, source=source, signal_type="EMA Reclaim")
+
+            state[key] = ema_state
 
 
 def check_daily_weekly(ticker, name, state, is_first_run, source):

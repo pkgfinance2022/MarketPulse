@@ -27,6 +27,7 @@ fabricated target/stop outcome.
 import pandas as pd
 import ta
 
+from analysis.ema_reclaim_strategy import EMAReclaimStrategy
 from analysis.reversal_playbook import ReversalPlaybook
 from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
 from analysis.rsi_divergence_strategy import RSIDivergenceStrategy
@@ -180,6 +181,79 @@ def backtest_rsi_wave(ticker, window_days, period="730d"):
         trades.append({
             "time": bar["time"], "engine": "RSI Wave", "type": kind,
             "direction": direction, "entry": price, "stop": levels["stop"], "target": levels["target1"],
+            **outcome,
+        })
+
+    return {"trades": trades, "summary": summarize_trades(trades)}
+
+
+def _simulate_moving_target(high, low, close, entry_pos, entry_price, stop, target_series):
+    """
+    Same semantics as simulate_outcome() (stop-first on an ambiguous
+    same-bar hit, walks to the end of data rather than a fixed
+    window), but for EMA Reclaim's target - the EMA200 level, which
+    moves bar to bar rather than being fixed at entry. This is what
+    the live app actually shows (a moving target line), and what the
+    original validation backtest checked before this was built - using
+    a scalar target here would silently disagree with both.
+    """
+
+    n = len(close)
+
+    for pos in range(entry_pos + 1, n):
+
+        h = high.iloc[pos]
+        l = low.iloc[pos]
+        target = float(target_series.iloc[pos])
+
+        hit_target = h >= target
+        hit_stop = l <= stop
+
+        if hit_stop:
+            return_pct = round((stop / entry_price - 1) * 100, 2)
+            return {"outcome": "STOP", "exit_time": close.index[pos], "exit_price": stop, "return_pct": return_pct, "bars_held": pos - entry_pos}
+
+        if hit_target:
+            return_pct = round((target / entry_price - 1) * 100, 2)
+            return {"outcome": "TARGET", "exit_time": close.index[pos], "exit_price": target, "return_pct": return_pct, "bars_held": pos - entry_pos}
+
+    last_price = float(close.iloc[-1])
+    return_pct = round((last_price / entry_price - 1) * 100, 2)
+
+    return {"outcome": "OPEN", "exit_time": close.index[-1], "exit_price": round(last_price, 4), "return_pct": return_pct, "bars_held": n - 1 - entry_pos}
+
+
+def backtest_ema_reclaim(ticker, window_days, period="730d"):
+    """EMA20 Reclaim (1H) - every confirmed reclaim entry in the window."""
+
+    trace, df = EMAReclaimStrategy.run_symbol(ticker, period=period)
+
+    if not trace:
+        return None
+
+    cutoff = _cutoff(window_days)
+    high, low, close = df["High"], df["Low"], df["Close"]
+    ema200 = ta.trend.ema_indicator(close, window=200)
+
+    trades = []
+
+    for bar in trace:
+
+        if bar["event"] != "ENTRY_LONG" or _naive(bar["time"]) < cutoff:
+            continue
+
+        idx = bar["index"]
+        price = bar["price"]
+        stop = bar["wave_low"]
+
+        if stop is None or stop >= price:
+            continue
+
+        outcome = _simulate_moving_target(high, low, close, idx, price, stop, ema200)
+
+        trades.append({
+            "time": bar["time"], "engine": "EMA20 Reclaim", "type": "Confirmed reclaim",
+            "direction": "LONG", "entry": price, "stop": round(stop, 4), "target": round(float(ema200.iloc[idx]), 4),
             **outcome,
         })
 
