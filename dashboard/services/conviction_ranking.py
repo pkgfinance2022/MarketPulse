@@ -28,14 +28,17 @@ WIN_RATE_LOOKUP = {
     "Chart Patterns:Piercing Pattern": {"win_rate": 54.8, "avg_return": 0.76, "n": 32},
     "Chart Patterns:Double Bottom": {"win_rate": 77.0, "avg_return": 0.76, "n": 92},
     # ~2 years, 9 Global Indices instruments (analysis/backtester.py's
-    # backtest_ema_reclaim). Win rate is real and matches the user's
-    # own read ("works most of the time"), but the down-move's-low
-    # stop is wide enough relative to the EMA200 target that avg
-    # return nets out barely positive - same shape as Setup (a high
-    # win rate that doesn't translate into a strong per-trade edge),
-    # included anyway per explicit instruction rather than withheld
-    # for a thin edge.
-    "EMA Reclaim": {"win_rate": 57.7, "avg_return": 0.01, "n": 941},
+    # backtest_ema_reclaim), AFTER adding MIN_DOWNTREND_DIVERGENCE_PCT
+    # (a real bug found live: it fired on Russell 2000 while chopping
+    # sideways, EMA20/EMA200 tangled ~0.2% apart, not a real downtrend).
+    # Requiring a genuine down-move dropped trade count sharply
+    # (941->298) and even lowered the raw win rate (57.7%->47.7%), but
+    # nearly 9x'd the average return (0.01%->0.09%) - fewer, deeper,
+    # more real setups. EUR/USD stopped qualifying at all under a flat
+    # 2% divergence threshold (its volatility is naturally much
+    # smaller than gold/oil/equities) - worth revisiting if that
+    # matters, not treated as broken.
+    "EMA Reclaim": {"win_rate": 47.7, "avg_return": 0.09, "n": 298},
 }
 
 

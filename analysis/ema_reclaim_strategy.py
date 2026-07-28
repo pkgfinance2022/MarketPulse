@@ -17,14 +17,19 @@ grounds.
 
 Backtested on ~2 years of real 1H data across 9 instruments (Global
 Indices: major US/international equity indices, Gold, Silver, Oil,
-EUR/USD, USD/JPY) before this was built: ~59% of confirmed reclaims
-went on to touch EMA200 before falling back to the down-move's own
-low. That win rate is real, but the average trade is close to
-breakeven once the stop (the down-move's low) and target (EMA200) are
-priced in - built anyway per explicit instruction, with the same
-honest stats surfaced in Command Center as every other engine (see
-dashboard/services/conviction_ranking.py's WIN_RATE_LOOKUP) rather
-than overstating it.
+EUR/USD, USD/JPY) before this was built. Real bug found AFTER first
+shipping this, live: it fired on Russell 2000 while chopping sideways,
+EMA20/EMA200 tangled only ~0.2% apart - not the deep, stretched
+down-move every one of the user's own charts showed. Fixed with
+MIN_DOWNTREND_DIVERGENCE_PCT (reusing ReversalPlaybook's own
+"meaningfully far apart" threshold and concept) - the down-move has to
+have pushed EMA20 at least this far below EMA200 at some point before
+a reclaim counts as real, not just noise. Requiring that dropped trade
+count sharply and even lowered the raw win rate, but nearly 9x'd the
+average return - fewer, deeper, more real setups over more frequent,
+shallow ones. Current, authoritative numbers live in
+dashboard/services/conviction_ranking.py's WIN_RATE_LOOKUP - surfaced
+in Command Center honestly, not overstated either direction.
 
 LONG-only - the backtest only validated the down-move-reverses-up
 case the user actually described and showed real charts for; the
@@ -48,6 +53,20 @@ class EMAReclaimStrategy:
     # "broken" - a single noisy bar dipping back under EMA20 right after
     # entry shouldn't reset the whole setup.
     WAVE_INVALIDATION_STREAK = 3
+
+    # Real, reported bug: a confirmed 2-candle reclaim fired on
+    # Russell 2000 while it was chopping sideways, EMA20 and EMA200
+    # tangled only ~0.2% apart - not the deep, stretched down-move
+    # every one of the user's own charts showed (Gold, all with
+    # EMA20/EMA200 several percent apart at the low). Requires the
+    # down-move to have pushed EMA20 at least this far below EMA200 at
+    # some point before a reclaim counts - same "meaningfully far
+    # apart" concept and threshold ReversalPlaybook.FAR_THRESHOLD_PCT
+    # already uses in this codebase, reused here rather than inventing
+    # a new number. Calibrated against every real historical entry
+    # this backtested: most Russell-2000-style chop sat under 1%,
+    # genuine reversals mostly cleared 2%+.
+    MIN_DOWNTREND_DIVERGENCE_PCT = 2.0
 
     @staticmethod
     def _prepare(df):
@@ -87,9 +106,13 @@ class EMAReclaimStrategy:
         phase = "WATCHING"
         wave_low = None
         rsi_touched_deep = False
+        max_divergence_pct = 0.0
         below_streak = 0
 
         trace = []
+
+        def divergence_pct(e20, e200):
+            return abs(e20 - e200) / e200 * 100 if e200 else 0.0
 
         for i in range(start, end):
 
@@ -108,6 +131,7 @@ class EMAReclaimStrategy:
                     phase = "PULLBACK"
                     wave_low = l
                     rsi_touched_deep = r <= cls.RSI_DEEP_TOUCH
+                    max_divergence_pct = divergence_pct(e20, e200)
 
             elif phase == "PULLBACK":
 
@@ -116,22 +140,35 @@ class EMAReclaimStrategy:
                 else:
                     wave_low = min(wave_low, l)
                     rsi_touched_deep = rsi_touched_deep or r <= cls.RSI_DEEP_TOUCH
+                    max_divergence_pct = max(max_divergence_pct, divergence_pct(e20, e200))
 
             elif phase == "RECLAIM_ALERT":
 
                 if above20:
 
-                    if price < e200:
-                        event = "ENTRY_LONG"
-                        phase = "IN_WAVE"
-                        below_streak = 0
-                    else:
+                    if price >= e200:
                         # Already back above EMA200 too by the
                         # confirming bar - the reversion already
                         # happened, nothing left to enter for.
                         phase = "WATCHING"
                         wave_low = None
                         rsi_touched_deep = False
+                        max_divergence_pct = 0.0
+                    elif max_divergence_pct < cls.MIN_DOWNTREND_DIVERGENCE_PCT:
+                        # Reclaim confirmed, but the preceding down-move
+                        # never got deep enough - sideways chop (e.g.
+                        # Russell 2000 tangled ~0.2% apart), not the
+                        # real, stretched downtrend this setup needs.
+                        # Reset silently - no signal, same as if nothing
+                        # happened.
+                        phase = "WATCHING"
+                        wave_low = None
+                        rsi_touched_deep = False
+                        max_divergence_pct = 0.0
+                    else:
+                        event = "ENTRY_LONG"
+                        phase = "IN_WAVE"
+                        below_streak = 0
 
                 else:
                     # Failed reclaim - back below EMA20 on the bar
@@ -139,6 +176,7 @@ class EMAReclaimStrategy:
                     phase = "PULLBACK"
                     wave_low = min(wave_low, l)
                     rsi_touched_deep = rsi_touched_deep or r <= cls.RSI_DEEP_TOUCH
+                    max_divergence_pct = max(max_divergence_pct, divergence_pct(e20, e200))
 
             elif phase == "IN_WAVE":
 
@@ -147,6 +185,7 @@ class EMAReclaimStrategy:
                     phase = "WATCHING"
                     wave_low = None
                     rsi_touched_deep = False
+                    max_divergence_pct = 0.0
                     below_streak = 0
                 elif not above20:
                     below_streak += 1
@@ -154,6 +193,7 @@ class EMAReclaimStrategy:
                         phase = "PULLBACK"
                         wave_low = l
                         rsi_touched_deep = r <= cls.RSI_DEEP_TOUCH
+                        max_divergence_pct = divergence_pct(e20, e200)
                         below_streak = 0
                 else:
                     below_streak = 0
@@ -162,6 +202,7 @@ class EMAReclaimStrategy:
                 "index": i, "phase": phase, "event": event,
                 "price": price, "rsi": r, "ema20": e20, "ema200": e200,
                 "wave_low": wave_low, "rsi_touched_deep": rsi_touched_deep,
+                "max_divergence_pct": round(max_divergence_pct, 2),
                 "time": time_index[i],
             })
 
