@@ -15,7 +15,7 @@ current EMA200 value), so those are used directly instead.
 
 from concurrent.futures import ThreadPoolExecutor
 
-from analysis.ema_reclaim_strategy import EMAReclaimStrategy
+from analysis.ema_reclaim_strategy import DailyEMAReclaimStrategy, EMAReclaimStrategy
 
 ACTIONABLE_STATES = {
     "ENTRY_LONG": "LONG",
@@ -27,15 +27,17 @@ SCREEN_WORKERS = 3   # kept low - same Streamlit Community Cloud thread-limit re
 
 class EMAReclaimStatusService:
 
+    STRATEGY = EMAReclaimStrategy
+
     @classmethod
     def analyse(cls, symbol, period="730d"):
 
-        trace, df = EMAReclaimStrategy.run_symbol(symbol, period=period)
+        trace, df = cls.STRATEGY.run_symbol(symbol, period=period)
 
         if trace is None:
             return None
 
-        description, state, event_time = EMAReclaimStrategy.describe(trace)
+        description, state, event_time = cls.STRATEGY.describe(trace)
         last = trace[-1]
 
         direction = ACTIONABLE_STATES.get(state)
@@ -90,10 +92,10 @@ class EMAReclaimStatusService:
     def _screen_one(cls, symbol, period):
 
         try:
-            trace, _ = EMAReclaimStrategy.run_symbol(symbol, period=period)
+            trace, _ = cls.STRATEGY.run_symbol(symbol, period=period)
 
             if trace:
-                description, state, event_time = EMAReclaimStrategy.describe(trace)
+                description, state, event_time = cls.STRATEGY.describe(trace)
                 last = trace[-1]
                 return symbol, {
                     "state": state,
@@ -123,3 +125,9 @@ class EMAReclaimStatusService:
                 states[symbol] = info
 
         return states
+
+
+class DailyEMAReclaimStatusService(EMAReclaimStatusService):
+    """Daily-bar variant - see DailyEMAReclaimStrategy for why this is a separate class rather than a parameter."""
+
+    STRATEGY = DailyEMAReclaimStrategy

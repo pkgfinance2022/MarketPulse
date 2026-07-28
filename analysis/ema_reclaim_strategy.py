@@ -209,10 +209,17 @@ class EMAReclaimStrategy:
         return trace
 
     @classmethod
-    def run_symbol(cls, symbol, period="730d"):
-        """Returns (trace, df) for a symbol, or (None, None) if there's not enough history."""
+    def run_symbol(cls, symbol, period="730d", interval="1h"):
+        """
+        Returns (trace, df) for a symbol, or (None, None) if there's
+        not enough history. The state machine itself doesn't care what
+        `interval` represents (1h or 1d bars) - MIN_HISTORY is a bar
+        count, and EMA200 needs ~200 bars to be meaningful regardless
+        of what each bar spans. interval="1d" is what the Daily variant
+        (see DailyEMAReclaimStrategy below) uses.
+        """
 
-        df = YahooProvider().history(symbol, interval="1h", period=period)
+        df = YahooProvider().history(symbol, interval=interval, period=period)
 
         if df.empty or len(df) < cls.MIN_HISTORY + 1:
             return None, None
@@ -292,3 +299,32 @@ class EMAReclaimStrategy:
         _, state, _ = cls.describe(trace)
 
         return cls.STATE_LABELS.get(state, "⚪ Watching")
+
+
+class DailyEMAReclaimStrategy(EMAReclaimStrategy):
+    """
+    Daily-bar variant - same state machine, same concept (2 consecutive
+    closes back above EMA20 after a real down-move, targeting EMA200),
+    just running on Daily bars instead of Hourly. Explicit follow-up
+    request ("I also want the logic to run in macro daily") after the
+    user showed a real Daily chart (Booking Holdings) where the same
+    pattern was playing out on that timeframe.
+
+    A separate class (not just a different `interval` argument at the
+    call site) so every caller - the scan, the status service, the
+    backtester, Telegram - has one unambiguous name for "the Daily
+    one", matching how RSIWaveStrategy/ReversalPlaybook and
+    DailyWeeklyReversalPlaybook are separate classes in this codebase
+    even though the underlying concept is related.
+
+    MIN_DOWNTREND_DIVERGENCE_PCT is NOT necessarily the same real
+    number on Daily bars (20/200-day EMAs move on a very different
+    scale than 20/200-HOUR EMAs) - see
+    analysis/backtester.py's backtest_daily_ema_reclaim, which
+    re-validates this threshold on Daily data rather than assuming the
+    Hourly-calibrated number just carries over.
+    """
+
+    @classmethod
+    def run_symbol(cls, symbol, period="730d", interval="1d"):
+        return super().run_symbol(symbol, period=period, interval=interval)

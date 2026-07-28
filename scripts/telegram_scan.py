@@ -44,11 +44,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from core.loader import AssetLoader
-from analysis.ema_reclaim_strategy import EMAReclaimStrategy
+from analysis.ema_reclaim_strategy import DailyEMAReclaimStrategy, EMAReclaimStrategy
 from analysis.reversal_playbook import ReversalPlaybook
 from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
 from analysis.rsi_wave_strategy import RSIWaveStrategy
-from dashboard.services.ema_reclaim_status import EMAReclaimStatusService
+from dashboard.services.ema_reclaim_status import DailyEMAReclaimStatusService, EMAReclaimStatusService
 from dashboard.services.rsi_wave_status import RSIWaveStatusService
 from dashboard.services.telegram_notifier import TelegramNotifier
 from dashboard.services.alert_log import AlertLog
@@ -259,6 +259,39 @@ def check_hourly(ticker, name, state, is_first_run, source):
             state[key] = ema_state
 
 
+def check_global_daily(ticker, name, state, is_first_run, source):
+    """
+    EMA20 Reclaim (Daily) - Global Indices only. Separate from
+    check_daily_weekly() below (which handles US/India/Crypto's own
+    Daily+Weekly Reversal Playbook) - Global Indices never had a Daily-
+    cadence check at all before this, so this is a new section in
+    main(), not an addition to an existing one.
+    """
+
+    try:
+        ema_trace, _ = DailyEMAReclaimStrategy.run_symbol(ticker)
+    except Exception as e:
+        print(f"  [Daily EMA Reclaim] {ticker}: fetch failed ({e})")
+        ema_trace = None
+
+    if not ema_trace:
+        return
+
+    desc, ema_state, event_time = DailyEMAReclaimStrategy.describe(ema_trace)
+    key = f"{ticker}:daily_ema_reclaim"
+    previous = state.get(key)
+
+    if ema_state == "ENTRY_LONG" and previous != "ENTRY_LONG" and not is_first_run:
+
+        last = ema_trace[-1]
+        status = DailyEMAReclaimStatusService.analyse(ticker)
+        stop_target = status["stop_target"] if status else None
+
+        send_alert(name, ticker, "EMA20 Reclaim (Daily)", "LONG", last["price"], last["rsi"], stop_target, "Daily", desc, event_time, source=source, signal_type="Daily EMA Reclaim")
+
+    state[key] = ema_state
+
+
 def check_daily_weekly(ticker, name, state, is_first_run, source):
     """Reversal Playbook Daily+Weekly - US Stocks + Indian Stocks + Crypto(BTC)."""
 
@@ -313,6 +346,11 @@ def main():
     print("=== Hourly: Global Indices ===")
     for ticker, name in tickers_for("Global", "All"):
         check_hourly(ticker, name, state, is_first_run, source="Global Indices")
+        time.sleep(PACE_SECONDS)
+
+    print("=== Daily: Global Indices (EMA Reclaim only) ===")
+    for ticker, name in tickers_for("Global", "All"):
+        check_global_daily(ticker, name, state, is_first_run, source="Global Indices")
         time.sleep(PACE_SECONDS)
 
     print("=== Hourly: Crypto (BTC-USD only) ===")

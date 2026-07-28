@@ -39,6 +39,19 @@ WIN_RATE_LOOKUP = {
     # smaller than gold/oil/equities) - worth revisiting if that
     # matters, not treated as broken.
     "EMA Reclaim": {"win_rate": 47.7, "avg_return": 0.09, "n": 298},
+    # Daily variant (analysis/backtester.py's backtest_daily_ema_reclaim),
+    # same ~2 years, 11 instruments (now including BTC/ETH). Genuinely
+    # thin sample - n=42 total, and most individual instruments only
+    # had 0-2 qualifying trades in the whole window (major equity
+    # indices: 1 each). The two instruments with an actually meaningful
+    # sample - Oil (n=10) and ETH (n=11) - both came back NEGATIVE
+    # (-0.47%/-0.62%), while the aggregate average return looks
+    # positive (+0.45%) almost entirely because of a few single-trade
+    # outliers (Russell 2000 +7.85% on n=1). Included per explicit
+    # instruction, but this number is much less trustworthy than every
+    # other entry here - treat "Daily EMA Reclaim" signals with more
+    # skepticism than the Hourly version until more data accumulates.
+    "Daily EMA Reclaim": {"win_rate": 47.5, "avg_return": 0.45, "n": 42},
 }
 
 

@@ -43,8 +43,8 @@ from dashboard.services.reversal_status_daily import DailyReversalStatusService
 from analysis.ema_proximity import PROXIMITY_TOLERANCE_PCT
 from dashboard.services.cross_asset_status import CrossAssetStatusService, CROSS_ASSET_TARGETS
 from dashboard.services.ema_proximity_status import EMAProximityStatusService
-from dashboard.services.ema_reclaim_status import EMAReclaimStatusService
-from analysis.ema_reclaim_strategy import EMAReclaimStrategy
+from dashboard.services.ema_reclaim_status import DailyEMAReclaimStatusService, EMAReclaimStatusService
+from analysis.ema_reclaim_strategy import DailyEMAReclaimStrategy, EMAReclaimStrategy
 from dashboard.services.pattern_status import ChartPatternStatusService, PATTERN_STATE_LABELS
 from dashboard.services.performance_ranking_status import PerformanceRankingStatusService
 from dashboard.services.rsi_divergence_status import RSIDivergenceStatusService
@@ -126,7 +126,7 @@ def _scan_eta_text(cache_entry):
 _format_event_time = time_utils.format_event_time
 
 
-NOTIFY_BASELINE_KEYS = ["wave_states", "wave_states_seeded", "reversal_states", "reversal_states_seeded", "divergence_states", "divergence_states_seeded", "pattern_states", "pattern_states_seeded", "ema_reclaim_states", "ema_reclaim_states_seeded"]
+NOTIFY_BASELINE_KEYS = ["wave_states", "wave_states_seeded", "reversal_states", "reversal_states_seeded", "divergence_states", "divergence_states_seeded", "pattern_states", "pattern_states_seeded", "ema_reclaim_states", "ema_reclaim_states_seeded", "daily_ema_reclaim_states", "daily_ema_reclaim_states_seeded"]
 
 for _prefix, _country, _title in [("us", None, None), ("india", None, None), ("crypto", None, None)]:
     NOTIFY_BASELINE_KEYS += [
@@ -166,6 +166,8 @@ def init_state():
         "pattern_states_seeded": persisted.get("pattern_states_seeded", False),
         "ema_reclaim_states": persisted.get("ema_reclaim_states", {}),
         "ema_reclaim_states_seeded": persisted.get("ema_reclaim_states_seeded", False),
+        "daily_ema_reclaim_states": persisted.get("daily_ema_reclaim_states", {}),
+        "daily_ema_reclaim_states_seeded": persisted.get("daily_ema_reclaim_states_seeded", False),
         "fundamental_scan_result": None,
     }
 
@@ -794,6 +796,91 @@ def check_for_new_ema_reclaim_signals():
     render_notification_trigger(browser_entries)
 
 
+@st.fragment(run_every=300)
+def check_for_new_daily_ema_reclaim_signals():
+    """Daily-bar sibling of check_for_new_ema_reclaim_signals() - see DailyEMAReclaimStrategy."""
+
+    market = st.session_state.global_market
+
+    if market is None:
+        return
+
+    tickers = market["df"]["Ticker"].tolist()
+    name_map = dict(zip(market["df"]["Ticker"], market["df"]["Name"]))
+
+    current_states = DailyEMAReclaimStatusService.screen_states(tickers)
+    previous_states = st.session_state.daily_ema_reclaim_states
+    is_first_check = not st.session_state.daily_ema_reclaim_states_seeded
+
+    new_signals = (
+        []
+        if is_first_check
+        else [
+            {
+                "ticker": ticker,
+                "name": name_map.get(ticker, ticker),
+                "state": info["state"],
+                "price": info["price"],
+            }
+            for ticker, info in current_states.items()
+            if info["state"] == "ENTRY_LONG"
+            and (previous_states.get(ticker) or {}).get("state") != "ENTRY_LONG"
+        ]
+    )
+
+    st.session_state.daily_ema_reclaim_states = current_states
+    st.session_state.daily_ema_reclaim_states_seeded = True
+    _persist_notify_baseline()
+
+    browser_entries = []
+
+    for signal in new_signals:
+
+        signal_label = DailyEMAReclaimStrategy.STATE_LABELS.get(signal["state"], signal["state"])
+
+        full_status = DailyEMAReclaimStatusService.analyse(signal["ticker"])
+        stop_target = full_status["stop_target"] if full_status else None
+
+        if not AlertLog.claim_if_new(
+            signal["ticker"], "LONG", signal["name"], signal["price"], None, stop_target,
+            source="Global Indices", signal_type="Daily EMA Reclaim",
+        ):
+            continue
+
+        price = round(signal["price"], 4) if signal["price"] is not None else "?"
+        event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
+
+        levels = (
+            f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
+            if stop_target and stop_target.get("stop") is not None
+            else ""
+        )
+
+        description = full_status["description"] if full_status else ""
+        message = (
+            f"🟢 {signal['name']} ({signal['ticker']}) — {signal_label} (Daily)\n"
+            f"{event_time}\nPrice {price}{levels}\n{description}"
+        )
+
+        st.toast(f"{signal_label} (Daily): {signal['name']}", icon="🟢")
+
+        if TelegramNotifier.is_configured() and not TelegramNotifier.send(message):
+            print(f"WARNING: Telegram send failed for Daily EMA Reclaim signal on {signal['ticker']}.")
+
+        browser_entries.append(
+            {
+                "ticker": signal["ticker"],
+                "name": signal["name"],
+                "direction": "LONG",
+                "price": signal["price"],
+                "rsi": None,
+                "stop_target": stop_target,
+            }
+        )
+
+    render_notification_trigger(browser_entries)
+
+
 GLOBAL_INDICES_REFRESH_SECONDS = 600   # faster than the universe tabs' hourly cadence (this is the "live, intraday" tab), but not so fast it re-fires the 4-engine scan pointlessly often
 
 # US market open (9:30 ET) usually lands at 15:30 CET, but shifts to 14:30
@@ -971,6 +1058,18 @@ def _scan_global_indices_data(sector):
         df["EMA Reclaim Full"] = df["Ticker"].map({t: info["description"] for t, info in ema_reclaim_states.items()}).fillna("")
         df["EMA Reclaim Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in ema_reclaim_states.items()}).fillna("—")
         _blank_stale_signal(df, "EMA Reclaim", "EMA Reclaim Timestamp")
+
+        # EMA20 Reclaim (Daily) - same concept, Daily bars instead of
+        # Hourly (explicit follow-up request after the user showed the
+        # same pattern playing out on a Daily stock chart). Separate
+        # backtest, separate divergence calibration - see
+        # analysis/ema_reclaim_strategy.py's DailyEMAReclaimStrategy.
+        daily_ema_reclaim_states = DailyEMAReclaimStatusService.screen_states(tickers)
+        daily_ema_reclaim_labels = {t: DailyEMAReclaimStrategy.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in daily_ema_reclaim_states.items()}
+        df["Daily EMA Reclaim"] = df["Ticker"].map(daily_ema_reclaim_labels).fillna("⚪ Watching")
+        df["Daily EMA Reclaim Full"] = df["Ticker"].map({t: info["description"] for t, info in daily_ema_reclaim_states.items()}).fillna("")
+        df["Daily EMA Reclaim Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in daily_ema_reclaim_states.items()}).fillna("—")
+        _blank_stale_signal(df, "Daily EMA Reclaim", "Daily EMA Reclaim Timestamp")
 
     else:
         divergence_states = {}
@@ -1945,6 +2044,7 @@ def render_global_indices_tab(meta):
     check_for_new_divergence_signals()
     check_for_new_pattern_signals()
     check_for_new_ema_reclaim_signals()
+    check_for_new_daily_ema_reclaim_signals()
 
     st.divider()
     render_parked_trades()
@@ -2843,6 +2943,7 @@ COMMAND_CENTER_COLUMNS = [
     # EMA Reclaim listed first per explicit instruction ("top of list") -
     # see analysis/ema_reclaim_strategy.py.
     ("EMA Reclaim", "EMA Reclaim Full", "EMA Reclaim Timestamp", "Hourly", ("entry",), "🔄 Reversal"),
+    ("Daily EMA Reclaim", "Daily EMA Reclaim Full", "Daily EMA Reclaim Timestamp", "Daily", ("entry",), "🔄 Reversal"),
     ("Setup", "Setup Full", "Setup Timestamp", "Hourly", ("entry",), "📈 Momentum"),
     ("Reversal", "Reversal Full", "Reversal Timestamp", "Hourly", ("signal", "trigger", "continuation"), "🔄 Reversal"),
     ("Daily Reversal", "Daily Reversal Full", "Daily Reversal Timestamp", "Daily", ("signal", "trigger", "continuation"), "🔄 Reversal"),
@@ -2897,6 +2998,7 @@ COMMAND_CENTER_TIMEFRAME_TABLES = [
         ("Reversal", "Reversal Full", "Reversal Timestamp"),
     ], COMMAND_CENTER_HOURLY_SOURCES),
     ("📆 Daily", "cc_daily", [
+        ("Daily EMA Reclaim", "Daily EMA Reclaim Full", "Daily EMA Reclaim Timestamp"),
         ("Daily Reversal", "Daily Reversal Full", "Daily Reversal Timestamp"),
     ], COMMAND_CENTER_BUYSELL_SOURCES),
     ("🗓 Weekly", "cc_weekly", [
