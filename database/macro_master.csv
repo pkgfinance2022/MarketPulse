@@ -49,3 +49,6 @@ Global,Forex,Currencies,USD/CAD,USD/CAD,USDCAD=X,FX,5,TRUE,FALSE,TRUE,canadian-d
 Global,Forex,Currencies,AUD/USD,AUD/USD,AUDUSD=X,FX,5,TRUE,FALSE,TRUE,australian-dollar,
 Global,Forex,Currencies,NZD/USD,NZD/USD,NZDUSD=X,FX,5,TRUE,FALSE,TRUE,new-zealand-dollar,
 
+Global,Crypto,Crypto,Bitcoin,Bitcoin,BTC-USD,CRYPTO,5,TRUE,FALSE,TRUE,crypto;bitcoin,
+Global,Crypto,Crypto,Ethereum,Ethereum,ETH-USD,CRYPTO,5,TRUE,FALSE,TRUE,crypto;ethereum,
+

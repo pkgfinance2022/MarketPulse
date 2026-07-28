@@ -34,6 +34,9 @@ MACRO_NEWS_TICKERS = [
     # Broad market + Fed/yields/inflation/geopolitics proxies - also
     # feed the mover-ranked "What's Moving Markets Today" section.
     "^GSPC", "^NDX", "^VIX", "GC=F", "CL=F", "DX-Y.NYB", "^TNX",
+    # Now tracked as macro instruments alongside indices/gold (explicit
+    # instruction) - also feed "What's Moving Markets Today".
+    "BTC-USD", "ETH-USD",
     # Europe/ECB proxy.
     "EURUSD=X",
     # Tier 1 commodities beyond oil/gold.
