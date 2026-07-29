@@ -46,16 +46,26 @@ class MarketClock:
             return {
                 "status": "OPEN",
                 "time": "24×7",
+                "local_time": None,
             }
 
         now = datetime.now(
             ZoneInfo(info["tz"])
         )
 
+        # Local clock time at that market, not just the open/close
+        # countdown - explicit request: a scheduled event announced at
+        # a specific LOCAL time (e.g. an FOMC decision at 2pm US
+        # Eastern) is easier to plan around if the market's current
+        # local time is visible right here, instead of having to
+        # convert it mentally from the server's own timezone.
+        local_time_str = now.strftime("%I:%M %p").lstrip("0")
+
         if now.weekday() >= 5:
             return {
                 "status": "CLOSED",
                 "time": "Weekend",
+                "local_time": local_time_str,
             }
 
         open_time = now.replace(
@@ -82,6 +92,7 @@ class MarketClock:
             return {
                 "status": "OPEN",
                 "time": f"Closes in {h}h {m}m",
+                "local_time": local_time_str,
             }
 
         if now < open_time:
@@ -102,4 +113,5 @@ class MarketClock:
         return {
             "status": "CLOSED",
             "time": f"Opens in {h}h {m}m",
+            "local_time": local_time_str,
         }

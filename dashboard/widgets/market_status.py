@@ -10,6 +10,14 @@ class MarketStatus:
 
         icon = "🟢" if data["status"] == "OPEN" else "🔴"
 
+        # Local clock time at that market - explicit request: a
+        # scheduled event announced at a specific local time (e.g. an
+        # FOMC decision at 2pm US Eastern) is easier to plan around
+        # against this than mentally converting from wherever the app
+        # happens to be running. None for Forex/Crypto - "24x7, no
+        # single home timezone" doesn't have one local time to show.
+        local_time_line = f"🕒 {data['local_time']} local\n\n" if data.get("local_time") else ""
+
         with column:
 
             st.markdown(
@@ -18,7 +26,7 @@ class MarketStatus:
 
 {icon} **{data["status"]}**
 
-{data["time"]}
+{local_time_line}{data["time"]}
 """
             )
 
