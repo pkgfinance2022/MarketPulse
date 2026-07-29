@@ -110,7 +110,7 @@ class ReversalPlaybook:
         # OHLC4 vs 23.66 on Close for the same bar). EMA/price levels
         # elsewhere still use Close - only RSI's own input changes.
         typical_price = (df["Open"] + high + low + close) / 4
-        rsi = ta.momentum.rsi(typical_price, window=14)
+        rsi = ta.momentum.rsi(typical_price, window=28)
 
         return {
             "close": close,
@@ -275,7 +275,7 @@ class ReversalPlaybook:
 
         close = df["Close"]
         typical_price = (df["Open"] + df["High"] + df["Low"] + close) / 4
-        rsi = ta.momentum.rsi(typical_price, window=14)
+        rsi = ta.momentum.rsi(typical_price, window=28)
         ema200 = ta.trend.ema_indicator(close, window=200)
 
         path_c_forming, path_c_confirmed = cls._daily_support_reclaim(rsi, close, ema200)

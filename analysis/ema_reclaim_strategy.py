@@ -78,7 +78,7 @@ class EMAReclaimStrategy:
             "low": df["Low"],
             "ema20": ta.trend.ema_indicator(close, window=20),
             "ema200": ta.trend.ema_indicator(close, window=200),
-            "rsi": ta.momentum.rsi(close, window=14),
+            "rsi": ta.momentum.rsi(close, window=28),
             "time": df.index,
         }
 

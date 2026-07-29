@@ -165,14 +165,14 @@ class Charts:
     @staticmethod
     def _rsi(fig, df, pullback_levels=False):
 
-        if "RSI14" not in df:
+        if "RSI28" not in df:
             return
 
         fig.add_trace(
             go.Scatter(
                 x=df.index,
-                y=df["RSI14"],
-                name="RSI14",
+                y=df["RSI28"],
+                name="RSI28",
                 line=dict(width=1.3, color="#9467bd"),
                 showlegend=False,
             ),

@@ -40,7 +40,7 @@ def check_readiness(symbol):
     # RSI on OHLC4 (typical price), not raw Close - consistent with
     # the 1H/Daily/Weekly engines this confirms against.
     typical_price = (df["Open"] + df["High"] + df["Low"] + df["Close"]) / 4
-    rsi = ta.momentum.rsi(typical_price, window=14)
+    rsi = ta.momentum.rsi(typical_price, window=28)
     recent_rsi = rsi.iloc[-LOOKBACK_BARS:]
 
     if recent_rsi.isna().all() or pd.isna(rsi.iloc[-1]):

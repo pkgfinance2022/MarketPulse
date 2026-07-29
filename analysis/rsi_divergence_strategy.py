@@ -97,7 +97,7 @@ class RSIDivergenceStrategy:
             "high": df["High"],
             "low": df["Low"],
             "ema200": ta.trend.ema_indicator(close, window=200),
-            "rsi": ta.momentum.rsi(typical_price, window=14),
+            "rsi": ta.momentum.rsi(typical_price, window=28),
             "time": df.index,
         }
 

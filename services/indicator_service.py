@@ -33,7 +33,7 @@ class IndicatorService:
         )
 
         indicator.rsi14 = round(
-            ta.momentum.rsi(close, window=14).iloc[-1],
+            ta.momentum.rsi(close, window=28).iloc[-1],
             2,
         )
 

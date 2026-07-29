@@ -17,7 +17,7 @@ class ChartService:
         1-column DataFrame instead of a Series, which crashed
         indicators with "Data must be 1-dimensional".
 
-        Adds everything the chart widget needs: EMA20/50/200, RSI14,
+        Adds everything the chart widget needs: EMA20/50/200, RSI28,
         MACD (line/signal/histogram), and rolling support/resistance,
         using the same formulas as the rest of the app (technical_engine.py
         / indicator_service.py) so the chart agrees with the Scanner and
@@ -51,7 +51,7 @@ class ChartService:
         df["EMA50"] = ta.trend.ema_indicator(close, window=50)
         df["EMA200"] = ta.trend.ema_indicator(close, window=200)
 
-        df["RSI14"] = ta.momentum.rsi(close, window=14)
+        df["RSI28"] = ta.momentum.rsi(close, window=28)
 
         macd = ta.trend.MACD(close)
         df["MACD"] = macd.macd()
