@@ -24,15 +24,21 @@ Scope, matching what the app itself computes for each source:
   Hourly (RSI Wave entries + Reversal Playbook 1H BUY/SELL) - these
   are the only two sources that get an Hourly view anywhere in the
   app.
-- US Stocks + Indian Stocks + Crypto (BTC-USD): Daily+Weekly
-  (Reversal Playbook Daily/Weekly engine) - matches the US/India
-  tabs' own timeframe exactly (they don't get Hourly - see
-  render_universe_live's show_hourly gate in dashboard/app.py).
+- Global Indices: Daily (EMA20 Reclaim only - see check_global_daily).
+- Crypto (BTC-USD): Daily+Weekly (Reversal Playbook Daily/Weekly
+  engine).
 
-Runs hourly, not more often - US/India alone are 100+ symbols each,
-and each Daily+Weekly check is 2 yfinance fetches per symbol. Anything
-faster risks the same YFRateLimitError already hit once this session
-(see providers/yahoo.py's fetch cache, added for the same reason).
+US Stocks and Indian Stocks are deliberately NOT covered here anymore
+- explicit instruction ("do not give me alert in telegram, also in
+command center for stocks - I am not going to trade stocks like
+this"). Those tabs still work fine in the app itself; this script
+just no longer pushes Telegram alerts for them.
+
+Runs hourly, not more often - Global Indices' own universe still
+means real yfinance volume across two full passes (Hourly + Daily)
+every run. Anything faster risks the same YFRateLimitError already hit
+once this session (see providers/yahoo.py's fetch cache, added for the
+same reason).
 """
 
 import json
@@ -356,15 +362,11 @@ def main():
     print("=== Hourly: Crypto (BTC-USD only) ===")
     check_hourly(CRYPTO_ALERT_TICKER, "Bitcoin", state, is_first_run, source="Crypto")
 
-    print("=== Daily+Weekly: US Stocks ===")
-    for ticker, name in tickers_for("USA", "All"):
-        check_daily_weekly(ticker, name, state, is_first_run, source="US Stocks")
-        time.sleep(PACE_SECONDS)
-
-    print("=== Daily+Weekly: Indian Stocks ===")
-    for ticker, name in tickers_for("India", "All"):
-        check_daily_weekly(ticker, name, state, is_first_run, source="Indian Stocks")
-        time.sleep(PACE_SECONDS)
+    # US Stocks/Indian Stocks Daily+Weekly Telegram alerts removed per
+    # explicit instruction ("do not give me alert in telegram, also in
+    # command center for stocks - I am not going to trade stocks like
+    # this"). The tabs themselves are untouched in the app - this only
+    # stops the standalone scanner's push notifications for them.
 
     print("=== Daily+Weekly: Crypto (BTC-USD only) ===")
     check_daily_weekly(CRYPTO_ALERT_TICKER, "Bitcoin", state, is_first_run, source="Crypto")

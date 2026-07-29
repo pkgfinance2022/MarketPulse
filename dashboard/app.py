@@ -2257,9 +2257,14 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
     view anywhere else in the app (see render_universe_live's
     show_hourly gate), so notifying on hourly noise for those two would
     just be alert fatigue for a timeframe the user doesn't even look
-    at. Daily Reversal and Weekly confluence notifications fire for all
-    three universes below, since that's the timeframe the US/India tabs
-    actually show.
+    at.
+
+    Telegram sends for Daily Reversal/Weekly Confluence/RSI Divergence
+    are now Crypto-only too (explicit instruction: "do not give me
+    alert in telegram... for stocks - I am not going to trade stocks
+    like this") - US/India still compute and log these signals (still
+    show in Notifications/Alert Tracking/the toast), only the actual
+    Telegram push is suppressed for those two universes.
     """
 
     if prefix == "crypto":
@@ -2423,7 +2428,8 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
 
         st.toast(f"{signal_label} (Daily): {signal['name']}", icon=icon)
 
-        if TelegramNotifier.is_configured():
+        # Telegram push is Crypto-only - see _notify_universe_changes's docstring.
+        if prefix == "crypto" and TelegramNotifier.is_configured():
             description = full_status["description"] if full_status else ""
             TelegramNotifier.send(
                 f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (Daily)\n"
@@ -2467,7 +2473,8 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
 
         st.toast(f"{signal_label} (Weekly): {signal['name']}", icon="🟢")
 
-        if TelegramNotifier.is_configured():
+        # Telegram push is Crypto-only - see _notify_universe_changes's docstring.
+        if prefix == "crypto" and TelegramNotifier.is_configured():
             TelegramNotifier.send(
                 f"🟢 {signal['name']} ({signal['ticker']}) — {signal_label} (Weekly)\n"
                 f"{event_time}\nPrice {price} · RSI {rsi}\n{signal['description']}"
@@ -2511,24 +2518,10 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
 
             icon = "🟢" if signal["direction"] == "LONG" else "🔴"
             signal_label = DIVERGENCE_SIGNAL_LABELS.get(signal["state"], signal["state"])
-            price = round(signal["price"], 2) if signal["price"] is not None else "?"
-            rsi = signal["rsi"] if signal["rsi"] is not None else "?"
-            event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
-
-            levels = (
-                f"\nStop {stop_target['stop']} · Target {stop_target['target1']} · R:R 1:{stop_target['risk_reward']}"
-                if stop_target and stop_target.get("stop") is not None
-                else ""
-            )
 
             st.toast(f"{signal_label}: {signal['name']}", icon=icon)
 
-            if TelegramNotifier.is_configured():
-                description = full_status["description"] if full_status else ""
-                TelegramNotifier.send(
-                    f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (RSI Divergence)\n"
-                    f"{event_time}\nPrice {price} · RSI {rsi}{levels}\n{description}"
-                )
+            # No Telegram push for US Stocks - see _notify_universe_changes's docstring.
 
 
 UNIVERSE_POLL_SECONDS = 20   # how often the page checks whether a background scan finished - cheap (just a dict read, no network), so this can be much shorter than the hourly rescan cadence itself
@@ -2993,14 +2986,16 @@ COMMAND_CENTER_SOURCES = [
     ("🪙 Crypto", "crypto_market"),
 ]
 
-# Indian Stocks' buy/sell calls are deliberately excluded from Command
+# Indian Stocks' buy/sell calls were already excluded from Command
 # Center's aggregated tables (not from the Indian Stocks tab itself,
-# which is untouched) - per explicit instruction, not a call the user
-# ever intends to act on from here. 200 EMA proximity is a better fit
-# for that tickers-worth-a-look need (already covers India/US/Crypto/
-# Global in one place) - see the 📍 200 EMA Watch tab, not duplicated
-# here in Command Center.
-COMMAND_CENTER_BUYSELL_SOURCES = [(label, key) for label, key in COMMAND_CENTER_SOURCES if key != "india_market"]
+# which is untouched) - 200 EMA proximity is a better fit for that
+# tickers-worth-a-look need (already covers India/US/Crypto/Global in
+# one place) - see the 📍 200 EMA Watch tab, not duplicated here.
+# US Stocks joined the exclusion per explicit instruction ("do not
+# give me alert in telegram, also in command center for stocks - I am
+# not going to trade stocks like this") - the US Stocks tab itself is
+# untouched, only this cross-tab aggregation stops surfacing it.
+COMMAND_CENTER_BUYSELL_SOURCES = [(label, key) for label, key in COMMAND_CENTER_SOURCES if key not in ("us_market", "india_market")]
 
 COMMAND_CENTER_COLUMNS = [
     # column, full-text column, timestamp column, base timeframe, keywords that identify an "act now" label (vs. watching/alert/forming), style
@@ -3031,13 +3026,6 @@ COMMAND_CENTER_STYLE_NOTES = {
     "🔄 Reversal": "Looks for a trend stalling/rejecting - expects it to turn.",
 }
 
-# RSI Divergence is Hourly on purpose for US Stocks too (unlike Setup/
-# Reversal, which US/India skip entirely, see COMMAND_CENTER_HOURLY_SOURCES
-# below) - it's a deliberate scope exception (Global Indices + US Stocks
-# only, explicitly not Indian Stocks or Crypto). Indian Stocks/Crypto
-# never get the column computed at all (see _scan_universe_data), so
-# they're excluded naturally without needing a special case here.
-COMMAND_CENTER_HOURLY_EXCEPTIONS = {"RSI Divergence"}
 
 # US/India aren't traded intraday (see render_universe_live's
 # show_hourly gate) - their dataframes still carry Setup/Reversal
@@ -3943,17 +3931,6 @@ def _build_command_center_rows():
         for column, full_col, ts_col, base_timeframe, keywords, style in COMMAND_CENTER_COLUMNS:
 
             if column not in df.columns:
-                continue
-
-            # US/India don't get an Hourly view anywhere else in the
-            # app (not traded intraday) - skip their Hourly-sourced
-            # rows here too, even though the underlying columns still
-            # exist in their scanned dataframe. RSI Divergence is a
-            # deliberate exception for US Stocks (see
-            # COMMAND_CENTER_HOURLY_EXCEPTIONS) - Indian Stocks never
-            # has this column computed at all, so it's excluded
-            # naturally regardless of this check.
-            if base_timeframe == "Hourly" and session_key in ("us_market", "india_market") and column not in COMMAND_CENTER_HOURLY_EXCEPTIONS:
                 continue
 
             mask = df[column].astype(str).str.lower().str.contains("|".join(keywords))
