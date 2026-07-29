@@ -22,10 +22,18 @@ class MarketClock:
             "close": (16, 0),
         },
 
+        # Amsterdam/CET, not London - matches
+        # dashboard/services/market_status_service.py's own
+        # "European Indices" convention (which drives the actual
+        # per-instrument status for Ger40/FRA40/NL25/FTSE) rather than
+        # UK-specific LSE hours. Real, reported inconsistency: this
+        # card showed 2:11pm while Amsterdam was actually 3:11pm - a
+        # genuine 1-hour gap (London is UTC+1 in summer, Amsterdam/CET
+        # is UTC+2), not a display quirk.
         "Europe": {
-            "tz": "Europe/London",
-            "open": (8, 0),
-            "close": (16, 30),
+            "tz": "Europe/Amsterdam",
+            "open": (9, 0),
+            "close": (17, 30),
         },
 
         "Forex": {
