@@ -35,7 +35,17 @@ WIN_RATE_LOOKUP = {
     "Setup": {"win_rate": 75.4, "avg_return": -0.02, "n": 566},
     "Reversal": {"win_rate": 43.0, "avg_return": -0.08, "n": 880},
     "Daily Reversal": {"win_rate": 25.0, "avg_return": -0.59, "n": 32},
-    "RSI Divergence": {"win_rate": 29.3, "avg_return": 0.07, "n": 99},
+    # Re-backtested (45 Global Indices/macro instruments incl. BTC/ETH,
+    # 365 days) after a real logic fix: the second leg used to count as
+    # "diverging" even if it only bottomed out around RSI 45 - nowhere
+    # near oversold, i.e. divergence forming in the middle of the range
+    # (explicit user correction: "diversion in middle has less value").
+    # Added SECOND_LEG_OVERSOLD(30)/SECOND_LEG_OVERBOUGHT(60) so the
+    # second leg has to actually retest the extreme zone. Filtered out
+    # ~7 marginal trades (123 -> 116) with a slightly better avg return
+    # (0.10% -> 0.14%), same win rate - a real quality improvement, no
+    # regression to the already-live Telegram/Command Center engine.
+    "RSI Divergence": {"win_rate": 32.8, "avg_return": 0.14, "n": 116},
     "Chart Patterns:Piercing Pattern": {"win_rate": 54.8, "avg_return": 0.76, "n": 32},
     "Chart Patterns:Double Bottom": {"win_rate": 77.0, "avg_return": 0.76, "n": 92},
     # RSI(28), same divergence gate as before (MIN_DOWNTREND_DIVERGENCE_PCT

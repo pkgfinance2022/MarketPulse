@@ -40,11 +40,18 @@ risk model RSI Wave already uses) - tested tightening the stop to the
 second-leg swing point directly, which made results worse, so left as
 the existing ATR/support-resistance formula.
 
-Backtested via analysis/backtester.py's backtest_rsi_divergence.
-Result on a 19-symbol, 365-day sample: positive avg return, but 12/19
-symbols individually positive vs 7 negative, and the strongest
-performers had thin per-symbol samples (3-5 trades) - promising, but
-not yet validated enough to wire into any live screener or alert.
+Backtested via analysis/backtester.py's backtest_rsi_divergence. Live
+on Global Indices (Command Center + Telegram) since that first pass.
+
+REAL BUG FOUND AND FIXED (explicit user correction): the second leg's
+own low/high was tracked with no floor/ceiling of its own - as long as
+it was "higher than base + MIN_DIVERGENCE_MARGIN", a second leg that
+only made it back to RSI 45 counted as a valid bullish divergence, even
+though 45 is nowhere near oversold. "Divergence in the middle has less
+value" - added SECOND_LEG_OVERSOLD (30) / SECOND_LEG_OVERBOUGHT (60) so
+the second leg has to actually retest the extreme zone before a
+divergence locks in, not just be numerically higher/lower than the
+base. See DailyRSIDivergenceStrategy for the Daily-bar variant.
 """
 
 import pandas as pd
@@ -71,6 +78,15 @@ class RSIDivergenceStrategy:
     # meaningful gap before calling it the textbook higher-low/
     # lower-high pattern.
     MIN_DIVERGENCE_MARGIN = 3
+
+    # Explicit real-world correction: a second leg that bottoms out at,
+    # say, RSI 45 is technically "higher" than an oversold base, but
+    # that's divergence forming in the middle of the range - much
+    # weaker than one that still retests oversold/overbought territory
+    # before turning. Require the second leg itself to still sit in the
+    # zone for the divergence to count at all.
+    SECOND_LEG_OVERSOLD = 30
+    SECOND_LEG_OVERBOUGHT = 60
 
     # How far RSI has to recover off the second-leg extreme before
     # entering - backtested sweep of 1-8 points all gave a positive
@@ -159,7 +175,11 @@ class RSIDivergenceStrategy:
                 elif second_leg_rsi is None or r < second_leg_rsi:
                     second_leg_rsi, second_leg_price = r, price
                     second_leg_ema200 = float(ema200.iloc[i]) if pd.notna(ema200.iloc[i]) else None
-                    divergence_locked = second_leg_price <= base_price and second_leg_rsi > base_rsi + cls.MIN_DIVERGENCE_MARGIN
+                    divergence_locked = (
+                        second_leg_price <= base_price
+                        and second_leg_rsi > base_rsi + cls.MIN_DIVERGENCE_MARGIN
+                        and second_leg_rsi <= cls.SECOND_LEG_OVERSOLD
+                    )
 
                 elif divergence_locked and r >= second_leg_rsi + cls.CONFIRM_MARGIN:
 
@@ -192,7 +212,11 @@ class RSIDivergenceStrategy:
                 elif second_leg_rsi is None or r > second_leg_rsi:
                     second_leg_rsi, second_leg_price = r, price
                     second_leg_ema200 = float(ema200.iloc[i]) if pd.notna(ema200.iloc[i]) else None
-                    divergence_locked = second_leg_price >= base_price and second_leg_rsi < base_rsi - cls.MIN_DIVERGENCE_MARGIN
+                    divergence_locked = (
+                        second_leg_price >= base_price
+                        and second_leg_rsi < base_rsi - cls.MIN_DIVERGENCE_MARGIN
+                        and second_leg_rsi >= cls.SECOND_LEG_OVERBOUGHT
+                    )
 
                 elif divergence_locked and r <= second_leg_rsi - cls.CONFIRM_MARGIN:
 
@@ -229,9 +253,9 @@ class RSIDivergenceStrategy:
         return trace
 
     @classmethod
-    def run_symbol(cls, symbol, period="730d"):
+    def run_symbol(cls, symbol, period="730d", interval="1h"):
 
-        df = YahooProvider().history(symbol, interval="1h", period=period)
+        df = YahooProvider().history(symbol, interval=interval, period=period)
 
         if df.empty or len(df) < cls.MIN_HISTORY + 1:
             return None, None
@@ -316,3 +340,19 @@ class RSIDivergenceStrategy:
         "ENTRY_LONG_DIVERGENCE": "🟢 Div1 (bullish) entry",
         "ENTRY_SHORT_DIVERGENCE": "🔴 Div2 (bearish) entry",
     }
+
+
+class DailyRSIDivergenceStrategy(RSIDivergenceStrategy):
+    """
+    Same state machine, Daily bars instead of Hourly - explicit
+    follow-up request after the user showed the same price-down/RSI-up
+    divergence shape playing out on a Daily BTC-USD chart, alongside a
+    1H Japan 225 example. MIN_HISTORY is a bar count (needs ~200 bars
+    for EMA200 confluence), timeframe-agnostic - only run_symbol's
+    default interval needs overriding, same pattern as
+    DailyEMAReclaimStrategy.
+    """
+
+    @classmethod
+    def run_symbol(cls, symbol, period="730d", interval="1d"):
+        return super().run_symbol(symbol, period=period, interval=interval)

@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import ta
 
-from analysis.rsi_divergence_strategy import RSIDivergenceStrategy
+from analysis.rsi_divergence_strategy import DailyRSIDivergenceStrategy, RSIDivergenceStrategy
 
 ACTIONABLE_STATES = {
     "ENTRY_LONG_DIVERGENCE": "LONG",
@@ -25,18 +25,20 @@ SCREEN_WORKERS = 3   # kept low - Streamlit Community Cloud's free-tier containe
 
 class RSIDivergenceStatusService:
 
+    STRATEGY = RSIDivergenceStrategy
+
     ATR_WINDOW = 14
     SUPPORT_RESISTANCE_WINDOW = 20
 
     @classmethod
     def analyse(cls, symbol, period="730d"):
 
-        trace, df = RSIDivergenceStrategy.run_symbol(symbol, period=period)
+        trace, df = cls.STRATEGY.run_symbol(symbol, period=period)
 
         if trace is None:
             return None
 
-        description, state, event_time = RSIDivergenceStrategy.describe(trace)
+        description, state, event_time = cls.STRATEGY.describe(trace)
         last = trace[-1]
 
         direction = ACTIONABLE_STATES.get(state)
@@ -127,10 +129,10 @@ class RSIDivergenceStatusService:
     def _screen_one(cls, symbol, period):
 
         try:
-            trace, _ = RSIDivergenceStrategy.run_symbol(symbol, period=period)
+            trace, _ = cls.STRATEGY.run_symbol(symbol, period=period)
 
             if trace:
-                description, state, event_time = RSIDivergenceStrategy.describe(trace)
+                description, state, event_time = cls.STRATEGY.describe(trace)
                 last = trace[-1]
                 return symbol, {
                     "state": state,
@@ -166,6 +168,10 @@ class RSIDivergenceStatusService:
         states = cls.screen_states(symbols, period=period)
 
         return {
-            symbol: RSIDivergenceStrategy.STATE_LABELS.get(info["state"], "⚪ Watching")
+            symbol: cls.STRATEGY.STATE_LABELS.get(info["state"], "⚪ Watching")
             for symbol, info in states.items()
         }
+
+
+class DailyRSIDivergenceStatusService(RSIDivergenceStatusService):
+    STRATEGY = DailyRSIDivergenceStrategy
