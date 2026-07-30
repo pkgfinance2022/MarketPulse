@@ -45,6 +45,8 @@ from dashboard.services.cross_asset_status import CrossAssetStatusService, CROSS
 from dashboard.services.ema_proximity_status import EMAProximityStatusService
 from dashboard.services.ema_reclaim_status import DailyEMAReclaimStatusService, EMAReclaimStatusService
 from analysis.ema_reclaim_strategy import DailyEMAReclaimStrategy, EMAReclaimStrategy
+from dashboard.services.divergence_reclaim_status import DivergenceReclaimStatusService
+from analysis.divergence_reclaim_strategy import DivergenceReclaimStrategy
 from dashboard.services.pattern_status import ChartPatternStatusService, PATTERN_STATE_LABELS
 from dashboard.services.performance_ranking_status import PerformanceRankingStatusService
 from dashboard.services.rsi_divergence_status import RSIDivergenceStatusService
@@ -126,7 +128,7 @@ def _scan_eta_text(cache_entry):
 _format_event_time = time_utils.format_event_time
 
 
-NOTIFY_BASELINE_KEYS = ["wave_states", "wave_states_seeded", "reversal_states", "reversal_states_seeded", "divergence_states", "divergence_states_seeded", "pattern_states", "pattern_states_seeded", "ema_reclaim_states", "ema_reclaim_states_seeded", "daily_ema_reclaim_states", "daily_ema_reclaim_states_seeded"]
+NOTIFY_BASELINE_KEYS = ["wave_states", "wave_states_seeded", "reversal_states", "reversal_states_seeded", "divergence_states", "divergence_states_seeded", "pattern_states", "pattern_states_seeded", "ema_reclaim_states", "ema_reclaim_states_seeded", "daily_ema_reclaim_states", "daily_ema_reclaim_states_seeded", "divergence_reclaim_states", "divergence_reclaim_states_seeded"]
 
 for _prefix, _country, _title in [("us", None, None), ("india", None, None), ("crypto", None, None)]:
     NOTIFY_BASELINE_KEYS += [
@@ -168,6 +170,8 @@ def init_state():
         "ema_reclaim_states_seeded": persisted.get("ema_reclaim_states_seeded", False),
         "daily_ema_reclaim_states": persisted.get("daily_ema_reclaim_states", {}),
         "daily_ema_reclaim_states_seeded": persisted.get("daily_ema_reclaim_states_seeded", False),
+        "divergence_reclaim_states": persisted.get("divergence_reclaim_states", {}),
+        "divergence_reclaim_states_seeded": persisted.get("divergence_reclaim_states_seeded", False),
         "fundamental_scan_result": None,
     }
 
@@ -881,6 +885,110 @@ def check_for_new_daily_ema_reclaim_signals():
     render_notification_trigger(browser_entries)
 
 
+DIVERGENCE_RECLAIM_BACKTEST_NOTE = (
+    "⚠️ Beta engine — backtested 25% win rate / -0.84% avg return (n=24, 45 Global Indices/macro "
+    "instruments, 365 days). Informational only, not a buy/sell signal — you decide."
+)
+
+
+@st.fragment(run_every=300)
+def check_for_new_divergence_reclaim_signals():
+    """
+    Beta engine (see analysis/divergence_reclaim_strategy.py) - explicit
+    instruction: alert on the setup forming and on the trend confirming,
+    never a buy/sell instruction ("i do not want you to tell me when to
+    buy or sell ... let me make the decision then"). Two distinct,
+    purely-informational alert moments - a fresh transition into
+    DIVERGENCE_FORMING (the divergence just formed at the low - "watch
+    this") and a fresh transition into ENTRY_LONG (price has since
+    reclaimed EMA20 with RSI back above 40 - "the trend is now
+    confirming"). Every message below carries the honest backtest
+    disclaimer - this has NOT shown a real edge yet.
+    """
+
+    market = st.session_state.global_market
+
+    if market is None:
+        return
+
+    tickers = market["df"]["Ticker"].tolist()
+    name_map = dict(zip(market["df"]["Ticker"], market["df"]["Name"]))
+
+    current_states = DivergenceReclaimStatusService.screen_states(tickers)
+    previous_states = st.session_state.divergence_reclaim_states
+    is_first_check = not st.session_state.divergence_reclaim_states_seeded
+
+    new_signals = (
+        []
+        if is_first_check
+        else [
+            {
+                "ticker": ticker,
+                "name": name_map.get(ticker, ticker),
+                "state": info["state"],
+                "price": info["price"],
+            }
+            for ticker, info in current_states.items()
+            if info["state"] in ("DIVERGENCE_FORMING", "ENTRY_LONG")
+            and (previous_states.get(ticker) or {}).get("state") != info["state"]
+        ]
+    )
+
+    st.session_state.divergence_reclaim_states = current_states
+    st.session_state.divergence_reclaim_states_seeded = True
+    _persist_notify_baseline()
+
+    browser_entries = []
+
+    for signal in new_signals:
+
+        is_setup = signal["state"] == "DIVERGENCE_FORMING"
+        signal_label = DivergenceReclaimStrategy.STATE_LABELS.get(signal["state"], signal["state"])
+
+        full_status = DivergenceReclaimStatusService.analyse(signal["ticker"])
+        stop_target = full_status["stop_target"] if full_status else None
+
+        # Distinct "direction" tag for the setup-only alert so it can't
+        # dedupe against a later, genuinely different reclaim-confirmed
+        # alert for the same ticker within AlertLog's 60-minute window
+        # (recently_logged() only keys on ticker+direction, not signal
+        # type).
+        if not AlertLog.claim_if_new(
+            signal["ticker"], "LONG" if not is_setup else "LONG_DIVERGENCE_SETUP", signal["name"], signal["price"], None, stop_target,
+            source="Global Indices", signal_type="Divergence Reclaim (Beta)",
+        ):
+            continue
+
+        price = round(signal["price"], 4) if signal["price"] is not None else "?"
+        event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
+        description = full_status["description"] if full_status else ""
+        icon = "🟡" if is_setup else "🔵"
+        headline = "Divergence spotted" if is_setup else "Trend now confirming"
+
+        message = (
+            f"{icon} BETA — {signal['name']} ({signal['ticker']}) — {headline}\n"
+            f"{event_time}\nPrice {price}\n{description}\n{DIVERGENCE_RECLAIM_BACKTEST_NOTE}"
+        )
+
+        st.toast(f"[Beta] {headline}: {signal['name']}", icon=icon)
+
+        if TelegramNotifier.is_configured() and not TelegramNotifier.send(message):
+            print(f"WARNING: Telegram send failed for Divergence Reclaim signal on {signal['ticker']}.")
+
+        browser_entries.append(
+            {
+                "ticker": signal["ticker"],
+                "name": signal["name"],
+                "direction": "LONG",
+                "price": signal["price"],
+                "rsi": None,
+                "stop_target": stop_target,
+            }
+        )
+
+    render_notification_trigger(browser_entries)
+
+
 GLOBAL_INDICES_REFRESH_SECONDS = 600   # faster than the universe tabs' hourly cadence (this is the "live, intraday" tab), but not so fast it re-fires the 4-engine scan pointlessly often
 
 # US market open (9:30 ET) usually lands at 15:30 CET, but shifts to 14:30
@@ -1070,6 +1178,21 @@ def _scan_global_indices_data(sector):
         df["Daily EMA Reclaim Full"] = df["Ticker"].map({t: info["description"] for t, info in daily_ema_reclaim_states.items()}).fillna("")
         df["Daily EMA Reclaim Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in daily_ema_reclaim_states.items()}).fillna("—")
         _blank_stale_signal(df, "Daily EMA Reclaim", "Daily EMA Reclaim Timestamp")
+
+        # Divergence Reclaim (1H, BETA) - a brand new, standalone
+        # engine, deliberately NOT folded into EMA Reclaim or RSI
+        # Divergence's own columns/tables (explicit instruction: "why
+        # mix with other working algo, this should be new path, new
+        # type of table"). Backtested negative so far (25% win rate,
+        # -0.84% avg return, n=24 - see analysis/divergence_reclaim_strategy.py) -
+        # shown only in the separate Beta tab with its own disclaimer,
+        # never in Command Center's Best Found/Everything Found.
+        divergence_reclaim_states = DivergenceReclaimStatusService.screen_states(tickers)
+        divergence_reclaim_labels = {t: DivergenceReclaimStrategy.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in divergence_reclaim_states.items()}
+        df["Divergence Reclaim"] = df["Ticker"].map(divergence_reclaim_labels).fillna("⚪ Watching")
+        df["Divergence Reclaim Full"] = df["Ticker"].map({t: info["description"] for t, info in divergence_reclaim_states.items()}).fillna("")
+        df["Divergence Reclaim Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in divergence_reclaim_states.items()}).fillna("—")
+        _blank_stale_signal(df, "Divergence Reclaim", "Divergence Reclaim Timestamp")
 
     else:
         divergence_states = {}
@@ -2109,6 +2232,7 @@ def render_global_indices_tab(meta):
     check_for_new_pattern_signals()
     check_for_new_ema_reclaim_signals()
     check_for_new_daily_ema_reclaim_signals()
+    check_for_new_divergence_reclaim_signals()
 
     st.divider()
     render_parked_trades()
@@ -3785,7 +3909,61 @@ def render_calendar_tab():
     _render_economic_calendar()
 
 
-OVERVIEW_SECTIONS = ["🎯 Command Center", "🔥 Highest Conviction", "🔔 Notifications", "🗓 Weekly Report"]
+@st.fragment(run_every=60)
+def render_beta_tab():
+    """
+    Engines still being evaluated - not yet part of Command Center or
+    Highest Conviction, shown here instead with an explicit disclaimer
+    so they're visible without being presented as validated. Explicit
+    instruction after seeing Divergence Reclaim's own backtest come
+    back negative: "let start a beta program test on it ... let me see
+    how it work" - visibility for observation, not a recommendation,
+    and explicitly no buy/sell instruction (see
+    check_for_new_divergence_reclaim_signals's own docstring).
+
+    Reads only the already-cached Global Indices scan (same session
+    state Command Center reads) - no extra fetch. Own fragment so it
+    picks up new states as the background scan completes, same reason
+    render_global_indices_movers is its own fragment rather than nested
+    inside Command Center's.
+    """
+
+    st.subheader("🧪 Beta — Divergence Reclaim (1H, Global Indices)")
+    st.warning(DIVERGENCE_RECLAIM_BACKTEST_NOTE)
+    st.caption(
+        "RSI shows a genuine divergence at a down-move's low (the second leg still retests oversold, not just "
+        "numerically higher than the base), then price closes back above EMA20 with RSI already above 40 - "
+        "targeting a move to EMA200. Alerts fire on BOTH the divergence forming and the reclaim confirming - "
+        "never a buy/sell instruction, purely so you don't have to watch every chart yourself."
+    )
+
+    market = st.session_state.global_market
+
+    if market is None:
+        st.info("Still scanning Global Indices for the first time — this fills in on its own.")
+        return
+
+    df = market["df"]
+
+    if "Divergence Reclaim" not in df.columns or df.empty:
+        st.info("No Divergence Reclaim data yet.")
+        return
+
+    mask = ~df["Divergence Reclaim"].astype(str).str.contains("watching", case=False, na=False)
+    table_df = df[mask]
+
+    if table_df.empty:
+        st.caption("Nothing beyond Watching right now.")
+        return
+
+    Scanner.render(
+        table_df, default_sort="Divergence Reclaim", key_prefix="beta_divergence_reclaim", compact=False,
+        columns=["Status", "Ticker", "Name", "Price", "1H %", "Divergence Reclaim", "Divergence Reclaim Timestamp"],
+        title="Divergence Reclaim", height=300,
+    )
+
+
+OVERVIEW_SECTIONS = ["🎯 Command Center", "🔥 Highest Conviction", "🔔 Notifications", "🗓 Weekly Report", "🧪 Beta"]
 
 
 def render_overview_tab():
@@ -3793,8 +3971,9 @@ def render_overview_tab():
     Every "what's actionable / what already happened" view in one tab,
     switched via nested st.tabs() rather than one long scroll - Command
     Center's Best Found/Everything Found/Movers, the ranked Highest
-    Conviction picks, the Notifications feed + Alert Tracking, and the
-    7-day Weekly Report digest.
+    Conviction picks, the Notifications feed + Alert Tracking, the
+    7-day Weekly Report digest, and the Beta tab for engines still
+    being evaluated (not yet part of Command Center/Highest Conviction).
 
     st.tabs() deliberately over st.radio() - switching a radio widget
     is a normal widget interaction, which triggers a FULL top-level
@@ -3807,7 +3986,7 @@ def render_overview_tab():
     regardless of how long a full rerun would otherwise take.
     """
 
-    tab_cc, tab_hc, tab_notif, tab_weekly = st.tabs(OVERVIEW_SECTIONS)
+    tab_cc, tab_hc, tab_notif, tab_weekly, tab_beta = st.tabs(OVERVIEW_SECTIONS)
 
     with tab_cc:
         render_command_center_tab()
@@ -3820,6 +3999,9 @@ def render_overview_tab():
 
     with tab_weekly:
         render_weekly_report_tab()
+
+    with tab_beta:
+        render_beta_tab()
 
 
 def render_markets_tab(meta):

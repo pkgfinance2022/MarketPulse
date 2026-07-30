@@ -58,6 +58,11 @@ WIN_RATE_LOOKUP = {
     # return meaningfully worse (+0.45% -> -0.79%). Treat Daily EMA
     # Reclaim signals with real skepticism until more data accumulates.
     "Daily EMA Reclaim": {"win_rate": 43.2, "avg_return": -0.79, "n": 39},
+    # BETA - deliberately excluded from Command Center/Highest
+    # Conviction (avg_return < 0), shown only on the Overview page's
+    # own Beta tab with its own disclaimer. See
+    # analysis/divergence_reclaim_strategy.py.
+    "Divergence Reclaim": {"win_rate": 25.0, "avg_return": -0.84, "n": 24},
 }
 
 

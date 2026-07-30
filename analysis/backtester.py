@@ -27,6 +27,7 @@ fabricated target/stop outcome.
 import pandas as pd
 import ta
 
+from analysis.divergence_reclaim_strategy import DivergenceReclaimStrategy
 from analysis.ema_reclaim_strategy import DailyEMAReclaimStrategy, EMAReclaimStrategy
 from analysis.reversal_playbook import ReversalPlaybook
 from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
@@ -253,6 +254,49 @@ def backtest_ema_reclaim(ticker, window_days, period="730d"):
 
         trades.append({
             "time": bar["time"], "engine": "EMA20 Reclaim", "type": "Confirmed reclaim",
+            "direction": "LONG", "entry": price, "stop": round(stop, 4), "target": round(float(ema200.iloc[idx]), 4),
+            **outcome,
+        })
+
+    return {"trades": trades, "summary": summarize_trades(trades)}
+
+
+def backtest_divergence_reclaim(ticker, window_days, period="730d"):
+    """
+    Divergence Reclaim (1H) - a new, separate engine (not EMA Reclaim,
+    not RSI Divergence - see analysis/divergence_reclaim_strategy.py).
+    Every confirmed entry in the window, riding a moving EMA200 target
+    exactly like backtest_ema_reclaim - same reasoning: this is what
+    the live app actually shows and what the user described trading.
+    """
+
+    trace, df = DivergenceReclaimStrategy.run_symbol(ticker, period=period)
+
+    if not trace:
+        return None
+
+    cutoff = _cutoff(window_days)
+    high, low, close = df["High"], df["Low"], df["Close"]
+    ema200 = ta.trend.ema_indicator(close, window=200)
+
+    trades = []
+
+    for bar in trace:
+
+        if bar["event"] != "ENTRY_LONG" or _naive(bar["time"]) < cutoff:
+            continue
+
+        idx = bar["index"]
+        price = bar["price"]
+        stop = bar["wave_low"]
+
+        if stop is None or stop >= price:
+            continue
+
+        outcome = _simulate_moving_target(high, low, close, idx, price, stop, ema200)
+
+        trades.append({
+            "time": bar["time"], "engine": "Divergence Reclaim", "type": "Confirmed reclaim",
             "direction": "LONG", "entry": price, "stop": round(stop, 4), "target": round(float(ema200.iloc[idx]), 4),
             **outcome,
         })
