@@ -4288,23 +4288,21 @@ def render_market_360_tab():
 
     import plotly.express as px
 
-    # Real complaint: boxes only showed the raw ticker symbol (^GSPC,
-    # HG=F, ...) - not memorable at a glance. "Label" combines both so
-    # the leaf box itself shows the name, not just a hover tooltip you
-    # have to mouse over one box at a time to read.
-    df = df.assign(Label=df["Name"] + "<br>" + df["Ticker"])
-
+    # Just the Name on the box itself (explicit follow-up: the ticker
+    # symbol alongside it wasn't wanted - Name alone reads clearly).
+    # Ticker stays available on hover as a reference, just not printed
+    # on the box.
     fig = px.treemap(
         df,
-        path=[px.Constant("All"), "Source", "Sector", "Label"],
+        path=[px.Constant("All"), "Source", "Sector", "Name"],
         values=[1] * len(df),
         color="Change %",
         color_continuous_scale="RdYlGn",
         color_continuous_midpoint=0,
         range_color=[-3, 3],
-        hover_data={"Name": True, "Ticker": True, "Change %": ":+.2f"},
+        hover_data={"Ticker": True, "Change %": ":+.2f"},
     )
-    fig.update_traces(texttemplate="%{label}<br>%{customdata[2]}", textposition="middle center")
+    fig.update_traces(texttemplate="%{label}<br>%{customdata[1]}", textposition="middle center")
     fig.update_layout(margin=dict(t=10, l=10, r=10, b=10), height=700)
 
     st.plotly_chart(fig, use_container_width=True)
