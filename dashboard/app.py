@@ -4145,6 +4145,46 @@ def render_beta_tab():
     inside Command Center's.
     """
 
+    _render_divergence_reclaim_beta_section()
+
+    st.divider()
+
+    _render_stock_divergence_beta_section(
+        "Daily Stock Divergence", "🧪 Beta — Daily Stock Divergence (US + Indian Stocks)",
+        DAILY_STOCK_DIVERGENCE_BACKTEST_NOTE,
+        "Regular RSI divergence recalibrated for individual stocks (looser 40/60 RSI zone, allows a flat-to-"
+        "slightly-higher price on the second touch, not just a strict lower low). Real surprise: despite missing "
+        "the original MSFT example that motivated this recalibration, the full backtest across both US and Indian "
+        "stocks is genuinely positive. Alerts fire on both the divergence forming and the trend confirming - "
+        "never a buy/sell instruction.",
+        "beta_daily_stock_divergence",
+    )
+
+    st.divider()
+
+    _render_stock_divergence_beta_section(
+        "Weekly Stock Divergence", "🧪 Beta — Weekly Stock Divergence (US + Indian Stocks)",
+        WEEKLY_STOCK_DIVERGENCE_BACKTEST_NOTE,
+        "Same recalibration as Daily above, on Weekly bars. Real examples (MSFT, ASML, Cambricon) showed this "
+        "shape clearly, but the full backtest across both US and Indian stocks is net negative. Alerts fire on "
+        "both the divergence forming and the trend confirming - never a buy/sell instruction.",
+        "beta_weekly_stock_divergence",
+    )
+
+
+def _render_divergence_reclaim_beta_section():
+    """
+    Real bug fixed here: this used to be inlined directly in
+    render_beta_tab() with its own early `return`s for "nothing to
+    show" - harmless when this was the ONLY section, but once the
+    Daily/Weekly Stock Divergence sections were added below it, those
+    `return`s started silently skipping them too every time Divergence
+    Reclaim itself had nothing active (the exact same "early return
+    skips everything below" bug class _render_command_center_signals
+    already had fixed once). Extracted into its own function so an
+    early exit here can't touch anything else in the tab.
+    """
+
     st.subheader("🧪 Beta — Divergence Reclaim (1H, Global Indices)")
     st.warning(DIVERGENCE_RECLAIM_BACKTEST_NOTE)
     st.caption(
@@ -4177,30 +4217,6 @@ def render_beta_tab():
         table_df, default_sort="Divergence Reclaim", key_prefix="beta_divergence_reclaim", compact=False,
         columns=["Status", "Ticker", "Name", "Price", "1H %", "Divergence Reclaim", "Divergence Reclaim Timestamp"],
         title="Divergence Reclaim", height=300,
-    )
-
-    st.divider()
-
-    _render_stock_divergence_beta_section(
-        "Daily Stock Divergence", "🧪 Beta — Daily Stock Divergence (US + Indian Stocks)",
-        DAILY_STOCK_DIVERGENCE_BACKTEST_NOTE,
-        "Regular RSI divergence recalibrated for individual stocks (looser 40/60 RSI zone, allows a flat-to-"
-        "slightly-higher price on the second touch, not just a strict lower low). Real surprise: despite missing "
-        "the original MSFT example that motivated this recalibration, the full backtest across both US and Indian "
-        "stocks is genuinely positive. Alerts fire on both the divergence forming and the trend confirming - "
-        "never a buy/sell instruction.",
-        "beta_daily_stock_divergence",
-    )
-
-    st.divider()
-
-    _render_stock_divergence_beta_section(
-        "Weekly Stock Divergence", "🧪 Beta — Weekly Stock Divergence (US + Indian Stocks)",
-        WEEKLY_STOCK_DIVERGENCE_BACKTEST_NOTE,
-        "Same recalibration as Daily above, on Weekly bars. Real examples (MSFT, ASML, Cambricon) showed this "
-        "shape clearly, but the full backtest across both US and Indian stocks is net negative. Alerts fire on "
-        "both the divergence forming and the trend confirming - never a buy/sell instruction.",
-        "beta_weekly_stock_divergence",
     )
 
 
