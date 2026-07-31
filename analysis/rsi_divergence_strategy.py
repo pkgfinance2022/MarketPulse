@@ -88,6 +88,17 @@ class RSIDivergenceStrategy:
     SECOND_LEG_OVERSOLD = 30
     SECOND_LEG_OVERBOUGHT = 60
 
+    # How far above (long) / below (short) the base price the second
+    # leg is still allowed to sit and count as "equal-or-lower" - 0
+    # means strictly enforce a real lower low/higher high (this class's
+    # own 1H-calibrated behavior). Daily/Weekly bars swing far enough
+    # that a real divergence often shows up as a FLAT-to-slightly-higher
+    # price with clearly rising RSI lows (real example: MSFT Weekly,
+    # price ~$356 -> ~$373, a real divergence despite the ~5% higher
+    # second touch) rather than a strict lower low - see
+    # StockRSIDivergenceStrategy, which overrides this.
+    PRICE_TOLERANCE_PCT = 0.0
+
     # How far RSI has to recover off the second-leg extreme before
     # entering - backtested sweep of 1-8 points all gave a positive
     # average return (unlike waiting for a 40/60 cross, which didn't),
@@ -176,7 +187,7 @@ class RSIDivergenceStrategy:
                     second_leg_rsi, second_leg_price = r, price
                     second_leg_ema200 = float(ema200.iloc[i]) if pd.notna(ema200.iloc[i]) else None
                     divergence_locked = (
-                        second_leg_price <= base_price
+                        second_leg_price <= base_price * (1 + cls.PRICE_TOLERANCE_PCT / 100)
                         and second_leg_rsi > base_rsi + cls.MIN_DIVERGENCE_MARGIN
                         and second_leg_rsi <= cls.SECOND_LEG_OVERSOLD
                     )
@@ -213,7 +224,7 @@ class RSIDivergenceStrategy:
                     second_leg_rsi, second_leg_price = r, price
                     second_leg_ema200 = float(ema200.iloc[i]) if pd.notna(ema200.iloc[i]) else None
                     divergence_locked = (
-                        second_leg_price >= base_price
+                        second_leg_price >= base_price * (1 - cls.PRICE_TOLERANCE_PCT / 100)
                         and second_leg_rsi < base_rsi - cls.MIN_DIVERGENCE_MARGIN
                         and second_leg_rsi >= cls.SECOND_LEG_OVERBOUGHT
                     )
@@ -351,8 +362,66 @@ class DailyRSIDivergenceStrategy(RSIDivergenceStrategy):
     for EMA200 confluence), timeframe-agnostic - only run_symbol's
     default interval needs overriding, same pattern as
     DailyEMAReclaimStrategy.
+
+    Macro-scoped (Global Indices/currencies/commodities) - explicit
+    instruction: "for macro like indices, currencies, hourly and daily
+    make sense" - keeps the same 1H-calibrated thresholds (25/75 base,
+    30/60 second-leg zone, strict equal-or-lower price) as the parent
+    class. See StockRSIDivergenceStrategy for the separately-calibrated
+    stock version (which needed real loosening - macro's own RSI swings
+    on Daily bars are still deep enough for these thresholds to fire;
+    see that class's docstring for why stocks are different).
     """
 
     @classmethod
     def run_symbol(cls, symbol, period="730d", interval="1d"):
+        return super().run_symbol(symbol, period=period, interval=interval)
+
+
+class StockRSIDivergenceStrategy(RSIDivergenceStrategy):
+    """
+    Daily-bar variant, recalibrated specifically for individual stocks
+    - explicit instruction: "for stocks, daily and weekly is good...
+    for macro hourly and daily make sense" (i.e. stocks use THIS
+    timeframe pair with THESE thresholds, macro keeps its own).
+
+    Real bug found via a live example (MSFT): the base/1H-calibrated
+    thresholds (RSI must touch <=25/>=75) never fired at all on MSFT's
+    real Daily/Weekly RSI, which only reached the low-to-mid 30s during
+    a real, sustained down-move/consolidation before a +15-18% rally -
+    individual stocks simply don't swing RSI as violently as an index
+    or FX pair on these slower timeframes. Loosened to 40/60 (base) and
+    45/55 (second-leg zone).
+
+    Also relaxed PRICE_TOLERANCE_PCT to 5% - MSFT's real Weekly second
+    leg was priced ~5% ABOVE the first leg (a flat-to-slightly-higher
+    consolidation with clearly rising RSI lows), not the stricter
+    equal-or-lower shape the base class requires - real divergence on
+    these timeframes doesn't always show up as a textbook lower low.
+    """
+
+    OVERSOLD_TOUCH = 40
+    OVERBOUGHT_TOUCH = 60
+    SECOND_LEG_OVERSOLD = 45
+    SECOND_LEG_OVERBOUGHT = 55
+    PRICE_TOLERANCE_PCT = 5.0
+
+    @classmethod
+    def run_symbol(cls, symbol, period="730d", interval="1d"):
+        return super().run_symbol(symbol, period=period, interval=interval)
+
+
+class WeeklyStockRSIDivergenceStrategy(StockRSIDivergenceStrategy):
+    """
+    Same recalibrated thresholds as StockRSIDivergenceStrategy, Weekly
+    bars instead of Daily - explicit instruction that stocks need BOTH
+    ("daily and weekly is good"). Weekly bars need a much longer period
+    to reach MIN_HISTORY (210 bars ~= 4 years of weekly data) - "730d"
+    (the Hourly/Daily default) would return well under 210 weekly bars
+    and always fail the history check, so this overrides period too,
+    not just interval.
+    """
+
+    @classmethod
+    def run_symbol(cls, symbol, period="10y", interval="1wk"):
         return super().run_symbol(symbol, period=period, interval=interval)

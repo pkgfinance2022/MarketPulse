@@ -26,7 +26,7 @@ from analysis.cross_asset_drivers import CrossAssetDriverEngine
 from analysis.market_regime import MarketRegimeEngine
 from analysis.reversal_playbook import ReversalPlaybook
 from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
-from analysis.rsi_divergence_strategy import RSIDivergenceStrategy
+from analysis.rsi_divergence_strategy import RSIDivergenceStrategy, WeeklyStockRSIDivergenceStrategy
 from analysis.rsi_wave_strategy import RSIWaveStrategy
 from core.loader import AssetLoader
 from dashboard.services.alert_log import AlertLog
@@ -49,7 +49,7 @@ from dashboard.services.divergence_reclaim_status import DivergenceReclaimStatus
 from analysis.divergence_reclaim_strategy import DivergenceReclaimStrategy
 from dashboard.services.pattern_status import ChartPatternStatusService, PATTERN_STATE_LABELS
 from dashboard.services.performance_ranking_status import PerformanceRankingStatusService
-from dashboard.services.rsi_divergence_status import RSIDivergenceStatusService
+from dashboard.services.rsi_divergence_status import RSIDivergenceStatusService, WeeklyStockRSIDivergenceStatusService
 from dashboard.services.rsi_wave_status import RSIWaveStatusService
 from dashboard.services.stock_news_service import StockNewsService
 from dashboard.services.telegram_notifier import TelegramNotifier
@@ -128,7 +128,7 @@ def _scan_eta_text(cache_entry):
 _format_event_time = time_utils.format_event_time
 
 
-NOTIFY_BASELINE_KEYS = ["wave_states", "wave_states_seeded", "reversal_states", "reversal_states_seeded", "divergence_states", "divergence_states_seeded", "pattern_states", "pattern_states_seeded", "ema_reclaim_states", "ema_reclaim_states_seeded", "daily_ema_reclaim_states", "daily_ema_reclaim_states_seeded", "divergence_reclaim_states", "divergence_reclaim_states_seeded"]
+NOTIFY_BASELINE_KEYS = ["wave_states", "wave_states_seeded", "reversal_states", "reversal_states_seeded", "divergence_states", "divergence_states_seeded", "pattern_states", "pattern_states_seeded", "ema_reclaim_states", "ema_reclaim_states_seeded", "daily_ema_reclaim_states", "daily_ema_reclaim_states_seeded", "divergence_reclaim_states", "divergence_reclaim_states_seeded", "weekly_stock_divergence_states", "weekly_stock_divergence_states_seeded"]
 
 for _prefix, _country, _title in [("us", None, None), ("india", None, None), ("crypto", None, None)]:
     NOTIFY_BASELINE_KEYS += [
@@ -172,6 +172,8 @@ def init_state():
         "daily_ema_reclaim_states_seeded": persisted.get("daily_ema_reclaim_states_seeded", False),
         "divergence_reclaim_states": persisted.get("divergence_reclaim_states", {}),
         "divergence_reclaim_states_seeded": persisted.get("divergence_reclaim_states_seeded", False),
+        "weekly_stock_divergence_states": persisted.get("weekly_stock_divergence_states", {}),
+        "weekly_stock_divergence_states_seeded": persisted.get("weekly_stock_divergence_states_seeded", False),
         "fundamental_scan_result": None,
     }
 
@@ -980,6 +982,114 @@ def check_for_new_divergence_reclaim_signals():
                 "ticker": signal["ticker"],
                 "name": signal["name"],
                 "direction": "LONG",
+                "price": signal["price"],
+                "rsi": None,
+                "stop_target": stop_target,
+            }
+        )
+
+    render_notification_trigger(browser_entries)
+
+
+WEEKLY_STOCK_DIVERGENCE_BACKTEST_NOTE = (
+    "⚠️ Beta engine — backtested 44% win rate / -2.91% avg return (n=53, 63 real US stocks, 5 years). "
+    "Informational only, not a buy/sell signal — you decide."
+)
+
+WEEKLY_STOCK_DIVERGENCE_ALERT_STATES = (
+    "DIVERGENCE_FORMING_LONG", "DIVERGENCE_FORMING_SHORT",
+    "ENTRY_LONG_DIVERGENCE", "ENTRY_SHORT_DIVERGENCE",
+)
+
+
+@st.fragment(run_every=300)
+def check_for_new_weekly_stock_divergence_signals():
+    """
+    Beta engine, US Stocks only (see WeeklyStockRSIDivergenceStrategy) -
+    same "alert on the setup forming AND the trend confirming, never a
+    buy/sell instruction" pattern as check_for_new_divergence_reclaim_signals,
+    just bidirectional (this engine fires both LONG and SHORT, unlike
+    Divergence Reclaim's LONG-only). Every message carries the honest,
+    negative backtest disclaimer.
+    """
+
+    market = st.session_state.us_market
+
+    if market is None:
+        return
+
+    tickers = market["df"]["Ticker"].tolist()
+    name_map = dict(zip(market["df"]["Ticker"], market["df"]["Name"]))
+
+    current_states = WeeklyStockRSIDivergenceStatusService.screen_states(tickers)
+    previous_states = st.session_state.weekly_stock_divergence_states
+    is_first_check = not st.session_state.weekly_stock_divergence_states_seeded
+
+    new_signals = (
+        []
+        if is_first_check
+        else [
+            {
+                "ticker": ticker,
+                "name": name_map.get(ticker, ticker),
+                "state": info["state"],
+                "price": info["price"],
+            }
+            for ticker, info in current_states.items()
+            if info["state"] in WEEKLY_STOCK_DIVERGENCE_ALERT_STATES
+            and (previous_states.get(ticker) or {}).get("state") != info["state"]
+        ]
+    )
+
+    st.session_state.weekly_stock_divergence_states = current_states
+    st.session_state.weekly_stock_divergence_states_seeded = True
+    _persist_notify_baseline()
+
+    browser_entries = []
+
+    for signal in new_signals:
+
+        is_forming = signal["state"] in ("DIVERGENCE_FORMING_LONG", "DIVERGENCE_FORMING_SHORT")
+        is_bullish = "LONG" in signal["state"]
+        signal_label = WeeklyStockRSIDivergenceStrategy.STATE_LABELS.get(signal["state"], signal["state"])
+
+        full_status = WeeklyStockRSIDivergenceStatusService.analyse(signal["ticker"])
+        stop_target = full_status["stop_target"] if full_status else None
+
+        # Distinct direction tag for the forming-only alert so it can't
+        # dedupe against a later, genuinely different confirmed alert
+        # for the same ticker within AlertLog's 60-minute window - same
+        # reasoning as check_for_new_divergence_reclaim_signals.
+        base_direction = "LONG" if is_bullish else "SHORT"
+        claim_direction = f"{base_direction}_DIVERGENCE_FORMING" if is_forming else base_direction
+
+        if not AlertLog.claim_if_new(
+            signal["ticker"], claim_direction, signal["name"], signal["price"], None, stop_target,
+            source="US Stocks", signal_type="Weekly Stock Divergence (Beta)",
+        ):
+            continue
+
+        price = round(signal["price"], 2) if signal["price"] is not None else "?"
+        event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
+        description = full_status["description"] if full_status else ""
+        icon = "🟡" if is_forming else ("🟢" if is_bullish else "🔴")
+        headline = "Divergence spotted" if is_forming else "Trend now confirming"
+
+        message = (
+            f"{icon} BETA — {signal['name']} ({signal['ticker']}) — {headline} ({signal_label})\n"
+            f"{event_time}\nPrice {price}\n{description}\n{WEEKLY_STOCK_DIVERGENCE_BACKTEST_NOTE}"
+        )
+
+        st.toast(f"[Beta] {headline}: {signal['name']}", icon=icon)
+
+        if TelegramNotifier.is_configured() and not TelegramNotifier.send(message):
+            print(f"WARNING: Telegram send failed for Weekly Stock Divergence signal on {signal['ticker']}.")
+
+        browser_entries.append(
+            {
+                "ticker": signal["ticker"],
+                "name": signal["name"],
+                "direction": base_direction,
                 "price": signal["price"],
                 "rsi": None,
                 "stop_target": stop_target,
@@ -2307,6 +2417,7 @@ def _scan_universe_data(country):
     reversal_states = {}
     daily_reversal_states = {}
     divergence_states = {}
+    weekly_stock_divergence_states = {}
 
     if not df.empty:
 
@@ -2357,6 +2468,22 @@ def _scan_universe_data(country):
             df["RSI Divergence Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in divergence_states.items()}).fillna("—")
             _blank_stale_signal(df, "RSI Divergence", "RSI Divergence Timestamp")
 
+            # Weekly Stock Divergence (BETA) - recalibrated specifically
+            # for individual stocks (see
+            # analysis/rsi_divergence_strategy.py's
+            # WeeklyStockRSIDivergenceStrategy) after a real MSFT/ASML/
+            # Cambricon example the 1H/Daily-calibrated thresholds
+            # never fired on. Backtested honestly negative (44% win
+            # rate, -2.91% avg return, n=53 on 63 real US stocks) -
+            # shipped anyway as beta, informational alerts only, never
+            # surfaced in Command Center/Highest Conviction.
+            weekly_stock_divergence_states = WeeklyStockRSIDivergenceStatusService.screen_states(tickers)
+            weekly_stock_divergence_labels = {t: WeeklyStockRSIDivergenceStrategy.STATE_LABELS.get(info["state"], "⚪ Watching") for t, info in weekly_stock_divergence_states.items()}
+            df["Weekly Stock Divergence"] = df["Ticker"].map(weekly_stock_divergence_labels).fillna("⚪ Watching")
+            df["Weekly Stock Divergence Full"] = df["Ticker"].map({t: info["description"] for t, info in weekly_stock_divergence_states.items()}).fillna("")
+            df["Weekly Stock Divergence Timestamp"] = df["Ticker"].map({t: _format_event_time(info["event_time"]) for t, info in weekly_stock_divergence_states.items()}).fillna("—")
+            _blank_stale_signal(df, "Weekly Stock Divergence", "Weekly Stock Divergence Timestamp")
+
     return {
         "df": df,
         "success": success,
@@ -2365,6 +2492,7 @@ def _scan_universe_data(country):
         "reversal_states": reversal_states,
         "daily_reversal_states": daily_reversal_states,
         "divergence_states": divergence_states,
+        "weekly_stock_divergence_states": weekly_stock_divergence_states,
     }
 
 
@@ -3026,6 +3154,13 @@ def render_universe_tab(prefix, country, title):
 
     UNIVERSE_REFRESH_FRAGMENTS[prefix]()
     render_universe_live(prefix, title)
+
+    if prefix == "us":
+        # Beta engine's own notify fragment - runs here so it fires
+        # regardless of which top-level tab is visually selected, same
+        # reasoning as the Global Indices notify fragments living
+        # inside render_global_indices_live().
+        check_for_new_weekly_stock_divergence_signals()
 
 
 # (label, session key, columns to scan for actionable rows -> keywords that mark that column's label as "act now")
@@ -3972,6 +4107,42 @@ def render_beta_tab():
         table_df, default_sort="Divergence Reclaim", key_prefix="beta_divergence_reclaim", compact=False,
         columns=["Status", "Ticker", "Name", "Price", "1H %", "Divergence Reclaim", "Divergence Reclaim Timestamp"],
         title="Divergence Reclaim", height=300,
+    )
+
+    st.divider()
+
+    st.subheader("🧪 Beta — Weekly Stock Divergence (US Stocks)")
+    st.warning(WEEKLY_STOCK_DIVERGENCE_BACKTEST_NOTE)
+    st.caption(
+        "Regular RSI divergence recalibrated for individual stocks (looser 40/60 RSI zone, allows a flat-to-"
+        "slightly-higher price on the second touch, not just a strict lower low) - real examples (MSFT, ASML, "
+        "Cambricon) showed this shape clearly, but the full backtest across 63 real stocks is net negative. "
+        "Alerts fire on both the divergence forming and the trend confirming - never a buy/sell instruction."
+    )
+
+    us_market = st.session_state.us_market
+
+    if us_market is None:
+        st.info("Still scanning US Stocks for the first time — this fills in on its own.")
+        return
+
+    us_df = us_market["df"]
+
+    if "Weekly Stock Divergence" not in us_df.columns or us_df.empty:
+        st.info("No Weekly Stock Divergence data yet.")
+        return
+
+    us_mask = ~us_df["Weekly Stock Divergence"].astype(str).str.contains("watching", case=False, na=False)
+    us_table_df = us_df[us_mask]
+
+    if us_table_df.empty:
+        st.caption("Nothing beyond Watching right now.")
+        return
+
+    Scanner.render(
+        us_table_df, default_sort="Weekly Stock Divergence", key_prefix="beta_weekly_stock_divergence", compact=False,
+        columns=["Status", "Ticker", "Name", "Price", "Weekly Stock Divergence", "Weekly Stock Divergence Timestamp"],
+        title="Weekly Stock Divergence", height=300,
     )
 
 

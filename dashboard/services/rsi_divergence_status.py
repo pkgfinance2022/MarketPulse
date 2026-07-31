@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import ta
 
-from analysis.rsi_divergence_strategy import DailyRSIDivergenceStrategy, RSIDivergenceStrategy
+from analysis.rsi_divergence_strategy import DailyRSIDivergenceStrategy, RSIDivergenceStrategy, WeeklyStockRSIDivergenceStrategy
 
 ACTIONABLE_STATES = {
     "ENTRY_LONG_DIVERGENCE": "LONG",
@@ -175,3 +175,14 @@ class RSIDivergenceStatusService:
 
 class DailyRSIDivergenceStatusService(RSIDivergenceStatusService):
     STRATEGY = DailyRSIDivergenceStrategy
+
+
+class WeeklyStockRSIDivergenceStatusService(RSIDivergenceStatusService):
+    """
+    BETA - see analysis/rsi_divergence_strategy.py's
+    WeeklyStockRSIDivergenceStrategy for the recalibrated thresholds
+    and analysis/backtester.py's backtest_weekly_stock_divergence for
+    the honest (negative) backtest this shipped with anyway.
+    """
+
+    STRATEGY = WeeklyStockRSIDivergenceStrategy

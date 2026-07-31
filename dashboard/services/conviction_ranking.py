@@ -63,6 +63,13 @@ WIN_RATE_LOOKUP = {
     # own Beta tab with its own disclaimer. See
     # analysis/divergence_reclaim_strategy.py.
     "Divergence Reclaim": {"win_rate": 25.0, "avg_return": -0.84, "n": 24},
+    # BETA - Weekly, recalibrated specifically for individual stocks
+    # (looser 40/60 RSI zone, 5% price tolerance on the second leg -
+    # see StockRSIDivergenceStrategy/WeeklyStockRSIDivergenceStrategy).
+    # Real anecdotes (MSFT, ASML, Cambricon) look great individually,
+    # but the full 63-stock/5yr backtest is net negative - shipped
+    # anyway as beta, alerts only, with this disclaimer shown.
+    "Weekly Stock Divergence": {"win_rate": 44.0, "avg_return": -2.91, "n": 53},
 }
 
 
