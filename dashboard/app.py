@@ -3222,9 +3222,21 @@ def _build_command_center_timeframe_df(signal_columns, sources):
         for _, row in df[mask].iterrows():
 
             # Crypto is noisy across ~250 symbols of wildly varying
-            # quality/liquidity - same reasoning as the Telegram
-            # alerts, which already only fire for BTC.
-            if session_key == "crypto_market" and row["Ticker"] != CRYPTO_ALERT_TICKER:
+            # quality/liquidity, so this table only ever let BTC-USD
+            # through from crypto_market - but BTC-USD (and ETH-USD)
+            # are now full members of global_market too (explicit
+            # instruction to give them the same macro treatment as
+            # indices/Gold), which already contributes an unfiltered
+            # row for BTC-USD. Real, reported bug: BTC-USD started
+            # showing up TWICE with near-identical values (independent
+            # fetches, slightly different exact price/RSI) - once
+            # tagged "Global Indices", once tagged "Crypto". Since
+            # global_market's version is a superset (also has EMA
+            # Reclaim/RSI Divergence/Daily variants crypto_market never
+            # computed for BTC), crypto_market no longer contributes
+            # anything unique here - skip it entirely rather than
+            # showing the same real signal twice.
+            if session_key == "crypto_market":
                 continue
 
             entry = {
@@ -4119,10 +4131,15 @@ def _build_command_center_rows():
 
             for _, row in df[mask].iterrows():
 
-                # Crypto is noisy across ~250 symbols of wildly varying
-                # quality/liquidity - same reasoning as the Telegram
-                # alerts, which already only fire for BTC.
-                if session_key == "crypto_market" and row["Ticker"] != CRYPTO_ALERT_TICKER:
+                # See the identical skip in _build_command_center_timeframe_df -
+                # BTC-USD is now a full global_market member too (same
+                # macro treatment as indices/Gold), which already
+                # contributes an unfiltered, more complete row for it.
+                # Real, reported bug: BTC-USD showed up TWICE in this
+                # table with near-identical values from two independent
+                # fetches. crypto_market no longer contributes anything
+                # unique to this table - skip it entirely.
+                if session_key == "crypto_market":
                     continue
 
                 why = row.get(full_col, "")
