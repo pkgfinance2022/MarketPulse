@@ -67,9 +67,18 @@ WIN_RATE_LOOKUP = {
     # (looser 40/60 RSI zone, 5% price tolerance on the second leg -
     # see StockRSIDivergenceStrategy/WeeklyStockRSIDivergenceStrategy).
     # Real anecdotes (MSFT, ASML, Cambricon) look great individually,
-    # but the full 63-stock/5yr backtest is net negative - shipped
-    # anyway as beta, alerts only, with this disclaimer shown.
-    "Weekly Stock Divergence": {"win_rate": 44.0, "avg_return": -2.91, "n": 53},
+    # but the full backtest is net negative in BOTH markets - US (44.0%
+    # win rate, -2.91% avg return, n=53) and India (48.4%, -0.85%,
+    # n=99) - combined below. Shipped anyway as beta, alerts only.
+    "Weekly Stock Divergence": {"win_rate": 46.9, "avg_return": -1.57, "n": 152},
+    # BETA - Daily sibling, same recalibrated thresholds. Real surprise:
+    # even though Daily never caught the original MSFT example that
+    # motivated this whole recalibration, the full backtest is
+    # genuinely POSITIVE in both markets - US (60.7% win rate, +0.92%
+    # avg return, n=215) and India (58.4%, +0.20%, n=468) - combined
+    # below. Still shown as beta (brand new, backtested only, not yet
+    # observed live) rather than folded into Highest Conviction.
+    "Daily Stock Divergence": {"win_rate": 59.1, "avg_return": 0.43, "n": 683},
 }
 
 

@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import ta
 
-from analysis.rsi_divergence_strategy import DailyRSIDivergenceStrategy, RSIDivergenceStrategy, WeeklyStockRSIDivergenceStrategy
+from analysis.rsi_divergence_strategy import DailyRSIDivergenceStrategy, RSIDivergenceStrategy, StockRSIDivergenceStrategy, WeeklyStockRSIDivergenceStrategy
 
 ACTIONABLE_STATES = {
     "ENTRY_LONG_DIVERGENCE": "LONG",
@@ -186,3 +186,15 @@ class WeeklyStockRSIDivergenceStatusService(RSIDivergenceStatusService):
     """
 
     STRATEGY = WeeklyStockRSIDivergenceStrategy
+
+
+class StockRSIDivergenceStatusService(RSIDivergenceStatusService):
+    """
+    BETA - Daily sibling of WeeklyStockRSIDivergenceStatusService (see
+    StockRSIDivergenceStrategy). Real, positive backtest across both US
+    (60.7% win rate, +0.92% avg return, n=215) and India (58.4% win
+    rate, +0.20% avg return, n=468) - see
+    analysis/backtester.py's backtest_stock_divergence.
+    """
+
+    STRATEGY = StockRSIDivergenceStrategy
