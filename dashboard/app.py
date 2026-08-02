@@ -903,6 +903,10 @@ DIVERGENCE_RECLAIM_BACKTEST_NOTE = (
     "⚠️ Beta engine — backtested 25% win rate / -0.84% avg return (n=24, 45 Global Indices/macro "
     "instruments, 365 days). Informational only, not a buy/sell signal — you decide."
 )
+# Short form for the alert message itself - the full sentence above
+# repeating on every single alert was real, reported noise ("the
+# messages are very dilutional"). Full numbers stay in the Beta tab.
+DIVERGENCE_RECLAIM_SHORT_NOTE = "Beta 25%/-0.84% avg, not a signal"
 
 
 @st.fragment(run_every=300)
@@ -973,18 +977,20 @@ def check_for_new_divergence_reclaim_signals():
         ):
             continue
 
-        price = round(signal["price"], 4) if signal["price"] is not None else "?"
-        event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
         description = full_status["description"] if full_status else ""
         icon = "🟡" if is_setup else "🔵"
         headline = "Divergence spotted" if is_setup else "Trend now confirming"
 
+        # Trimmed per explicit feedback ("the messages are very
+        # dilutional") - dropped the timestamp line (Telegram already
+        # timestamps every message) and the full-sentence disclaimer
+        # (now a short clause; full numbers live in the Beta tab).
         message = (
-            f"{icon} BETA — {signal['name']} ({signal['ticker']}) — {headline}\n"
-            f"{event_time}\nPrice {price}\n{description}\n{DIVERGENCE_RECLAIM_BACKTEST_NOTE}"
+            f"{icon} Divergence Reclaim (Beta) — {signal['name']} ({signal['ticker']}) — {headline}\n"
+            f"{description}\n{DIVERGENCE_RECLAIM_SHORT_NOTE}"
         )
 
-        st.toast(f"[Beta] {headline}: {signal['name']}", icon=icon)
+        st.toast(f"[Divergence Reclaim] {headline}: {signal['name']}", icon=icon)
 
         if TelegramNotifier.is_configured() and not TelegramNotifier.send(message):
             print(f"WARNING: Telegram send failed for Divergence Reclaim signal on {signal['ticker']}.")
@@ -1007,11 +1013,13 @@ WEEKLY_STOCK_DIVERGENCE_BACKTEST_NOTE = (
     "⚠️ Beta engine — backtested combined US+India: 46.9% win rate / -1.57% avg return (n=152, 5 years). "
     "Informational only, not a buy/sell signal — you decide."
 )
+WEEKLY_STOCK_DIVERGENCE_SHORT_NOTE = "Beta 46.9%/-1.57% avg, not a signal"
 
 DAILY_STOCK_DIVERGENCE_BACKTEST_NOTE = (
     "⚠️ Beta engine — backtested combined US+India: 59.1% win rate / +0.43% avg return (n=683, 5 years). "
     "Real edge, but brand new/backtest-only so far. Informational only, not a buy/sell signal — you decide."
 )
+DAILY_STOCK_DIVERGENCE_SHORT_NOTE = "Beta 59.1%/+0.43% avg, not a signal"
 
 STOCK_DIVERGENCE_ALERT_STATES = (
     "DIVERGENCE_FORMING_LONG", "DIVERGENCE_FORMING_SHORT",
@@ -1019,7 +1027,7 @@ STOCK_DIVERGENCE_ALERT_STATES = (
 )
 
 
-def _check_stock_divergence_signals(market_key, state_key, seeded_key, status_service, strategy, backtest_note, source_label, signal_type_label, icon_forming="🟡"):
+def _check_stock_divergence_signals(market_key, state_key, seeded_key, status_service, strategy, short_note, source_label, signal_type_label, icon_forming="🟡"):
     """
     Thin wrapper over _check_divergence_signals_for - reads tickers/
     names from an already-cached universe scan (US/India Stocks).
@@ -1034,14 +1042,14 @@ def _check_stock_divergence_signals(market_key, state_key, seeded_key, status_se
     name_map = dict(zip(market["df"]["Ticker"], market["df"]["Name"]))
 
     _check_divergence_signals_for(
-        tickers, name_map, state_key, seeded_key, status_service, strategy, backtest_note, source_label, signal_type_label, icon_forming,
+        tickers, name_map, state_key, seeded_key, status_service, strategy, short_note, source_label, signal_type_label, icon_forming,
     )
 
 
 CRYPTO_SHORT_TF_NAMES = {"BTC-USD": "Bitcoin", "ETH-USD": "Ethereum"}
 
 
-def _check_crypto_short_tf_divergence_signals(state_key, seeded_key, status_service, strategy, backtest_note, signal_type_label, icon_forming="🟡"):
+def _check_crypto_short_tf_divergence_signals(state_key, seeded_key, status_service, strategy, short_note, signal_type_label, icon_forming="🟡"):
     """
     Thin wrapper over _check_divergence_signals_for for the 1m/5m/15m
     crypto beta engines - BTC-USD/ETH-USD only, no universe scan behind
@@ -1050,11 +1058,11 @@ def _check_crypto_short_tf_divergence_signals(state_key, seeded_key, status_serv
     """
 
     _check_divergence_signals_for(
-        list(CRYPTO_SHORT_TF_NAMES), CRYPTO_SHORT_TF_NAMES, state_key, seeded_key, status_service, strategy, backtest_note, "Crypto", signal_type_label, icon_forming,
+        list(CRYPTO_SHORT_TF_NAMES), CRYPTO_SHORT_TF_NAMES, state_key, seeded_key, status_service, strategy, short_note, "Crypto", signal_type_label, icon_forming,
     )
 
 
-def _check_divergence_signals_for(tickers, name_map, state_key, seeded_key, status_service, strategy, backtest_note, source_label, signal_type_label, icon_forming="🟡"):
+def _check_divergence_signals_for(tickers, name_map, state_key, seeded_key, status_service, strategy, short_note, source_label, signal_type_label, icon_forming="🟡"):
     """
     Shared body for every Daily/Weekly/5m/15m x US/India/Crypto
     Divergence beta notify fragment - same "alert on the setup forming
@@ -1113,17 +1121,29 @@ def _check_divergence_signals_for(tickers, name_map, state_key, seeded_key, stat
             continue
 
         price = round(signal["price"], 2) if signal["price"] is not None else "?"
-        event_time = time_utils.now_cet().strftime("%Y-%m-%d %H:%M:%S CET")
         description = full_status["description"] if full_status else ""
         icon = icon_forming if is_forming else ("🟢" if is_bullish else "🔴")
         headline = "Divergence spotted" if is_forming else "Trend now confirming"
 
+        # Real gap: "BETA" alone doesn't say WHICH engine/timeframe
+        # fired - with 5 near-identical-looking Daily/Weekly/5m/15m/1m
+        # divergence engines now live, that's genuinely ambiguous
+        # without asking. signal_type_label already carries the exact
+        # distinct name (e.g. "5m Crypto Divergence (Beta)") - use it
+        # here instead of the generic word.
+        #
+        # Trimmed per explicit feedback ("the messages are very
+        # dilutional") - dropped the timestamp line (Telegram already
+        # timestamps every message) and the redundant parenthetical
+        # signal_label (description already restates the same state in
+        # prose); short_note replaces the full backtest sentence with
+        # one short clause - full numbers live in the Beta tab.
         message = (
-            f"{icon} BETA — {signal['name']} ({signal['ticker']}) — {headline} ({signal_label})\n"
-            f"{event_time}\nPrice {price}\n{description}\n{backtest_note}"
+            f"{icon} {signal_type_label} — {signal['name']} ({signal['ticker']}) — {headline}\n"
+            f"{description}\n{short_note}"
         )
 
-        st.toast(f"[Beta] {headline}: {signal['name']}", icon=icon)
+        st.toast(f"[{signal_type_label}] {headline}: {signal['name']}", icon=icon)
 
         if TelegramNotifier.is_configured() and not TelegramNotifier.send(message):
             print(f"WARNING: Telegram send failed for {signal_type_label} signal on {signal['ticker']}.")
@@ -1147,7 +1167,7 @@ def check_for_new_weekly_stock_divergence_signals():
     """US Stocks - see _check_stock_divergence_signals."""
     _check_stock_divergence_signals(
         "us_market", "weekly_stock_divergence_states", "weekly_stock_divergence_states_seeded",
-        WeeklyStockRSIDivergenceStatusService, WeeklyStockRSIDivergenceStrategy, WEEKLY_STOCK_DIVERGENCE_BACKTEST_NOTE,
+        WeeklyStockRSIDivergenceStatusService, WeeklyStockRSIDivergenceStrategy, WEEKLY_STOCK_DIVERGENCE_SHORT_NOTE,
         "US Stocks", "Weekly Stock Divergence (Beta)",
     )
 
@@ -1157,7 +1177,7 @@ def check_for_new_india_weekly_stock_divergence_signals():
     """Indian Stocks - see _check_stock_divergence_signals."""
     _check_stock_divergence_signals(
         "india_market", "india_weekly_stock_divergence_states", "india_weekly_stock_divergence_states_seeded",
-        WeeklyStockRSIDivergenceStatusService, WeeklyStockRSIDivergenceStrategy, WEEKLY_STOCK_DIVERGENCE_BACKTEST_NOTE,
+        WeeklyStockRSIDivergenceStatusService, WeeklyStockRSIDivergenceStrategy, WEEKLY_STOCK_DIVERGENCE_SHORT_NOTE,
         "Indian Stocks", "Weekly Stock Divergence (Beta)",
     )
 
@@ -1167,7 +1187,7 @@ def check_for_new_daily_stock_divergence_signals():
     """US Stocks - see _check_stock_divergence_signals."""
     _check_stock_divergence_signals(
         "us_market", "daily_stock_divergence_states", "daily_stock_divergence_states_seeded",
-        StockRSIDivergenceStatusService, StockRSIDivergenceStrategy, DAILY_STOCK_DIVERGENCE_BACKTEST_NOTE,
+        StockRSIDivergenceStatusService, StockRSIDivergenceStrategy, DAILY_STOCK_DIVERGENCE_SHORT_NOTE,
         "US Stocks", "Daily Stock Divergence (Beta)", icon_forming="🔵",
     )
 
@@ -1177,7 +1197,7 @@ def check_for_new_india_daily_stock_divergence_signals():
     """Indian Stocks - see _check_stock_divergence_signals."""
     _check_stock_divergence_signals(
         "india_market", "india_daily_stock_divergence_states", "india_daily_stock_divergence_states_seeded",
-        StockRSIDivergenceStatusService, StockRSIDivergenceStrategy, DAILY_STOCK_DIVERGENCE_BACKTEST_NOTE,
+        StockRSIDivergenceStatusService, StockRSIDivergenceStrategy, DAILY_STOCK_DIVERGENCE_SHORT_NOTE,
         "Indian Stocks", "Daily Stock Divergence (Beta)", icon_forming="🔵",
     )
 
@@ -1187,17 +1207,20 @@ CRYPTO_5M_DIVERGENCE_BACKTEST_NOTE = (
     "yfinance's max history for this interval, a much smaller sample than usual). Informational only, "
     "not a buy/sell signal — you decide."
 )
+CRYPTO_5M_DIVERGENCE_SHORT_NOTE = "Beta 46.7%/+0.09% avg (60d), not a signal"
 
 CRYPTO_15M_DIVERGENCE_BACKTEST_NOTE = (
     "⚠️ Beta engine — backtested BTC+ETH combined: 26.7% win rate / +0.08% avg return (n=15, 60 days — "
     "a very thin sample). Informational only, not a buy/sell signal — you decide."
 )
+CRYPTO_15M_DIVERGENCE_SHORT_NOTE = "Beta 26.7%/+0.08% avg (60d, thin), not a signal"
 
 CRYPTO_1M_DIVERGENCE_BACKTEST_NOTE = (
     "⚠️ UNVALIDATED — cannot be backtested at all (yfinance keeps only 7-8 days of 1-minute history, "
     "nowhere near enough occurrences to trust a win rate). Pure live observation only, not a buy/sell "
     "signal — you decide."
 )
+CRYPTO_1M_DIVERGENCE_SHORT_NOTE = "Unvalidated (can't backtest), live-only, not a signal"
 
 
 @st.fragment(run_every=300)
@@ -1205,7 +1228,7 @@ def check_for_new_crypto_5m_divergence_signals():
     """BTC-USD/ETH-USD only - see _check_crypto_short_tf_divergence_signals."""
     _check_crypto_short_tf_divergence_signals(
         "crypto_5m_divergence_states", "crypto_5m_divergence_states_seeded",
-        Crypto5mRSIDivergenceStatusService, Crypto5mRSIDivergenceStrategy, CRYPTO_5M_DIVERGENCE_BACKTEST_NOTE,
+        Crypto5mRSIDivergenceStatusService, Crypto5mRSIDivergenceStrategy, CRYPTO_5M_DIVERGENCE_SHORT_NOTE,
         "5m Crypto Divergence (Beta)", icon_forming="🔵",
     )
 
@@ -1215,7 +1238,7 @@ def check_for_new_crypto_15m_divergence_signals():
     """BTC-USD/ETH-USD only - see _check_crypto_short_tf_divergence_signals."""
     _check_crypto_short_tf_divergence_signals(
         "crypto_15m_divergence_states", "crypto_15m_divergence_states_seeded",
-        Crypto15mRSIDivergenceStatusService, Crypto15mRSIDivergenceStrategy, CRYPTO_15M_DIVERGENCE_BACKTEST_NOTE,
+        Crypto15mRSIDivergenceStatusService, Crypto15mRSIDivergenceStrategy, CRYPTO_15M_DIVERGENCE_SHORT_NOTE,
         "15m Crypto Divergence (Beta)", icon_forming="🟠",
     )
 
@@ -1231,7 +1254,7 @@ def check_for_new_crypto_1m_divergence_signals():
     """
     _check_crypto_short_tf_divergence_signals(
         "crypto_1m_divergence_states", "crypto_1m_divergence_states_seeded",
-        Crypto1mRSIDivergenceStatusService, Crypto1mRSIDivergenceStrategy, CRYPTO_1M_DIVERGENCE_BACKTEST_NOTE,
+        Crypto1mRSIDivergenceStatusService, Crypto1mRSIDivergenceStrategy, CRYPTO_1M_DIVERGENCE_SHORT_NOTE,
         "1m Crypto Divergence (Unvalidated)", icon_forming="🟣",
     )
 
