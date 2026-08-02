@@ -31,7 +31,7 @@ from analysis.divergence_reclaim_strategy import DivergenceReclaimStrategy
 from analysis.ema_reclaim_strategy import DailyEMAReclaimStrategy, EMAReclaimStrategy
 from analysis.reversal_playbook import ReversalPlaybook
 from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
-from analysis.rsi_divergence_strategy import DailyRSIDivergenceStrategy, RSIDivergenceStrategy, StockRSIDivergenceStrategy, WeeklyStockRSIDivergenceStrategy
+from analysis.rsi_divergence_strategy import Crypto5mRSIDivergenceStrategy, Crypto15mRSIDivergenceStrategy, DailyRSIDivergenceStrategy, DailyWideRSIDivergenceStrategy, RSIDivergenceStrategy, StockRSIDivergenceStrategy, WeeklyStockRSIDivergenceStrategy, WideRSIDivergenceStrategy
 from analysis.rsi_wave_strategy import RSIWaveStrategy
 from dashboard.services.rsi_wave_status import RSIWaveStatusService
 from dashboard.services.time_utils import now_cet
@@ -443,6 +443,80 @@ def backtest_daily_rsi_divergence(ticker, window_days, period="730d"):
         })
 
     return {"trades": trades, "summary": summarize_trades(trades)}
+
+
+def _backtest_generic_rsi_divergence(strategy, engine_label, ticker, window_days, period="730d"):
+    """
+    Shared body for backtest_wide_rsi_divergence/backtest_daily_wide_rsi_divergence
+    - same fixed-R:R stop/target formula as every other RSI Divergence
+    variant (RSIWaveStatusService._stop_target).
+    """
+
+    trace, df = strategy.run_symbol(ticker, period=period)
+
+    if not trace:
+        return None
+
+    cutoff = _cutoff(window_days)
+    high, low, close = df["High"], df["Low"], df["Close"]
+
+    atr = ta.volatility.average_true_range(high, low, close, window=RSIWaveStatusService.ATR_WINDOW)
+    support = low.rolling(RSIWaveStatusService.SUPPORT_RESISTANCE_WINDOW).min()
+    resistance = high.rolling(RSIWaveStatusService.SUPPORT_RESISTANCE_WINDOW).max()
+
+    trades = []
+
+    for bar in trace:
+
+        if bar["event"] not in RSI_DIVERGENCE_ENTRY_EVENTS or _naive(bar["time"]) < cutoff:
+            continue
+
+        direction = "LONG" if "LONG" in bar["event"] else "SHORT"
+        idx = bar["index"]
+        price = bar["price"]
+
+        atr_val = float(atr.iloc[idx]) if pd.notna(atr.iloc[idx]) else 0.0
+        support_val = float(support.iloc[idx]) if pd.notna(support.iloc[idx]) else price
+        resistance_val = float(resistance.iloc[idx]) if pd.notna(resistance.iloc[idx]) else price
+
+        levels = RSIWaveStatusService._stop_target(direction, price, support_val, resistance_val, atr_val)
+        outcome = simulate_outcome(high, low, close, idx, direction, price, levels["stop"], levels["target1"])
+
+        if outcome is None:
+            continue
+
+        trades.append({
+            "time": bar["time"], "engine": engine_label, "type": "RSI Divergence",
+            "direction": direction, "entry": price, "stop": levels["stop"], "target": levels["target1"],
+            **outcome,
+        })
+
+    return {"trades": trades, "summary": summarize_trades(trades)}
+
+
+def backtest_wide_rsi_divergence(ticker, window_days, period="730d"):
+    """1H macro, loosened thresholds - see WideRSIDivergenceStrategy."""
+    return _backtest_generic_rsi_divergence(WideRSIDivergenceStrategy, "Wide RSI Divergence", ticker, window_days, period=period)
+
+
+def backtest_daily_wide_rsi_divergence(ticker, window_days, period="730d"):
+    """Daily macro, loosened thresholds - see DailyWideRSIDivergenceStrategy."""
+    return _backtest_generic_rsi_divergence(DailyWideRSIDivergenceStrategy, "Daily Wide RSI Divergence", ticker, window_days, period=period)
+
+
+def backtest_crypto_5m_divergence(ticker, window_days=60, period="60d"):
+    """
+    5-minute, crypto only (BTC-USD/ETH-USD) - see
+    Crypto5mRSIDivergenceStrategy. period="60d" is yfinance's own hard
+    limit for this interval, not a design choice - window_days defaults
+    to match it since there's no more history to filter against anyway.
+    """
+    return _backtest_generic_rsi_divergence(Crypto5mRSIDivergenceStrategy, "5m Crypto Divergence", ticker, window_days, period=period)
+
+
+def backtest_crypto_15m_divergence(ticker, window_days=60, period="60d"):
+    """15-minute, crypto only - see Crypto15mRSIDivergenceStrategy. Same 60d hard limit as the 5m variant."""
+    return _backtest_generic_rsi_divergence(Crypto15mRSIDivergenceStrategy, "15m Crypto Divergence", ticker, window_days, period=period)
 
 
 def backtest_weekly_stock_divergence(ticker, window_days, period="10y"):

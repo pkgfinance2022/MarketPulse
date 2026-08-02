@@ -26,7 +26,7 @@ from analysis.cross_asset_drivers import CrossAssetDriverEngine
 from analysis.market_regime import MarketRegimeEngine
 from analysis.reversal_playbook import ReversalPlaybook
 from analysis.reversal_playbook_daily import DailyWeeklyReversalPlaybook
-from analysis.rsi_divergence_strategy import RSIDivergenceStrategy, StockRSIDivergenceStrategy, WeeklyStockRSIDivergenceStrategy
+from analysis.rsi_divergence_strategy import Crypto1mRSIDivergenceStrategy, Crypto5mRSIDivergenceStrategy, Crypto15mRSIDivergenceStrategy, RSIDivergenceStrategy, StockRSIDivergenceStrategy, WeeklyStockRSIDivergenceStrategy
 from analysis.rsi_wave_strategy import RSIWaveStrategy
 from core.loader import AssetLoader
 from dashboard.services.alert_log import AlertLog
@@ -49,7 +49,7 @@ from dashboard.services.divergence_reclaim_status import DivergenceReclaimStatus
 from analysis.divergence_reclaim_strategy import DivergenceReclaimStrategy
 from dashboard.services.pattern_status import ChartPatternStatusService, PATTERN_STATE_LABELS
 from dashboard.services.performance_ranking_status import PerformanceRankingStatusService
-from dashboard.services.rsi_divergence_status import RSIDivergenceStatusService, StockRSIDivergenceStatusService, WeeklyStockRSIDivergenceStatusService
+from dashboard.services.rsi_divergence_status import Crypto1mRSIDivergenceStatusService, Crypto5mRSIDivergenceStatusService, Crypto15mRSIDivergenceStatusService, RSIDivergenceStatusService, StockRSIDivergenceStatusService, WeeklyStockRSIDivergenceStatusService
 from dashboard.services.rsi_wave_status import RSIWaveStatusService
 from dashboard.services.stock_news_service import StockNewsService
 from dashboard.services.telegram_notifier import TelegramNotifier
@@ -128,7 +128,7 @@ def _scan_eta_text(cache_entry):
 _format_event_time = time_utils.format_event_time
 
 
-NOTIFY_BASELINE_KEYS = ["wave_states", "wave_states_seeded", "reversal_states", "reversal_states_seeded", "divergence_states", "divergence_states_seeded", "pattern_states", "pattern_states_seeded", "ema_reclaim_states", "ema_reclaim_states_seeded", "daily_ema_reclaim_states", "daily_ema_reclaim_states_seeded", "divergence_reclaim_states", "divergence_reclaim_states_seeded", "weekly_stock_divergence_states", "weekly_stock_divergence_states_seeded", "india_weekly_stock_divergence_states", "india_weekly_stock_divergence_states_seeded", "daily_stock_divergence_states", "daily_stock_divergence_states_seeded", "india_daily_stock_divergence_states", "india_daily_stock_divergence_states_seeded"]
+NOTIFY_BASELINE_KEYS = ["wave_states", "wave_states_seeded", "reversal_states", "reversal_states_seeded", "divergence_states", "divergence_states_seeded", "pattern_states", "pattern_states_seeded", "ema_reclaim_states", "ema_reclaim_states_seeded", "daily_ema_reclaim_states", "daily_ema_reclaim_states_seeded", "divergence_reclaim_states", "divergence_reclaim_states_seeded", "weekly_stock_divergence_states", "weekly_stock_divergence_states_seeded", "india_weekly_stock_divergence_states", "india_weekly_stock_divergence_states_seeded", "daily_stock_divergence_states", "daily_stock_divergence_states_seeded", "india_daily_stock_divergence_states", "india_daily_stock_divergence_states_seeded", "crypto_1m_divergence_states", "crypto_1m_divergence_states_seeded", "crypto_5m_divergence_states", "crypto_5m_divergence_states_seeded", "crypto_15m_divergence_states", "crypto_15m_divergence_states_seeded"]
 
 for _prefix, _country, _title in [("us", None, None), ("india", None, None), ("crypto", None, None)]:
     NOTIFY_BASELINE_KEYS += [
@@ -180,6 +180,12 @@ def init_state():
         "daily_stock_divergence_states_seeded": persisted.get("daily_stock_divergence_states_seeded", False),
         "india_daily_stock_divergence_states": persisted.get("india_daily_stock_divergence_states", {}),
         "india_daily_stock_divergence_states_seeded": persisted.get("india_daily_stock_divergence_states_seeded", False),
+        "crypto_1m_divergence_states": persisted.get("crypto_1m_divergence_states", {}),
+        "crypto_1m_divergence_states_seeded": persisted.get("crypto_1m_divergence_states_seeded", False),
+        "crypto_5m_divergence_states": persisted.get("crypto_5m_divergence_states", {}),
+        "crypto_5m_divergence_states_seeded": persisted.get("crypto_5m_divergence_states_seeded", False),
+        "crypto_15m_divergence_states": persisted.get("crypto_15m_divergence_states", {}),
+        "crypto_15m_divergence_states_seeded": persisted.get("crypto_15m_divergence_states_seeded", False),
         "fundamental_scan_result": None,
     }
 
@@ -1015,12 +1021,8 @@ STOCK_DIVERGENCE_ALERT_STATES = (
 
 def _check_stock_divergence_signals(market_key, state_key, seeded_key, status_service, strategy, backtest_note, source_label, signal_type_label, icon_forming="🟡"):
     """
-    Shared body for the four Daily/Weekly x US/India Stock Divergence
-    beta notify fragments - same "alert on the setup forming AND the
-    trend confirming, never a buy/sell instruction" pattern as
-    check_for_new_divergence_reclaim_signals, bidirectional (these
-    engines fire both LONG and SHORT). Every message carries the
-    engine's own honest backtest disclaimer.
+    Thin wrapper over _check_divergence_signals_for - reads tickers/
+    names from an already-cached universe scan (US/India Stocks).
     """
 
     market = st.session_state.get(market_key)
@@ -1030,6 +1032,37 @@ def _check_stock_divergence_signals(market_key, state_key, seeded_key, status_se
 
     tickers = market["df"]["Ticker"].tolist()
     name_map = dict(zip(market["df"]["Ticker"], market["df"]["Name"]))
+
+    _check_divergence_signals_for(
+        tickers, name_map, state_key, seeded_key, status_service, strategy, backtest_note, source_label, signal_type_label, icon_forming,
+    )
+
+
+CRYPTO_SHORT_TF_NAMES = {"BTC-USD": "Bitcoin", "ETH-USD": "Ethereum"}
+
+
+def _check_crypto_short_tf_divergence_signals(state_key, seeded_key, status_service, strategy, backtest_note, signal_type_label, icon_forming="🟡"):
+    """
+    Thin wrapper over _check_divergence_signals_for for the 1m/5m/15m
+    crypto beta engines - BTC-USD/ETH-USD only, no universe scan behind
+    it (these are standalone, on-demand fetches, not part of any
+    broader cached market).
+    """
+
+    _check_divergence_signals_for(
+        list(CRYPTO_SHORT_TF_NAMES), CRYPTO_SHORT_TF_NAMES, state_key, seeded_key, status_service, strategy, backtest_note, "Crypto", signal_type_label, icon_forming,
+    )
+
+
+def _check_divergence_signals_for(tickers, name_map, state_key, seeded_key, status_service, strategy, backtest_note, source_label, signal_type_label, icon_forming="🟡"):
+    """
+    Shared body for every Daily/Weekly/5m/15m x US/India/Crypto
+    Divergence beta notify fragment - same "alert on the setup forming
+    AND the trend confirming, never a buy/sell instruction" pattern as
+    check_for_new_divergence_reclaim_signals, bidirectional (these
+    engines fire both LONG and SHORT). Every message carries the
+    engine's own honest backtest disclaimer.
+    """
 
     current_states = status_service.screen_states(tickers)
     previous_states = st.session_state[state_key]
@@ -1146,6 +1179,60 @@ def check_for_new_india_daily_stock_divergence_signals():
         "india_market", "india_daily_stock_divergence_states", "india_daily_stock_divergence_states_seeded",
         StockRSIDivergenceStatusService, StockRSIDivergenceStrategy, DAILY_STOCK_DIVERGENCE_BACKTEST_NOTE,
         "Indian Stocks", "Daily Stock Divergence (Beta)", icon_forming="🔵",
+    )
+
+
+CRYPTO_5M_DIVERGENCE_BACKTEST_NOTE = (
+    "⚠️ Beta engine — backtested BTC+ETH combined: 46.7% win rate / +0.09% avg return (n=45, 60 days — "
+    "yfinance's max history for this interval, a much smaller sample than usual). Informational only, "
+    "not a buy/sell signal — you decide."
+)
+
+CRYPTO_15M_DIVERGENCE_BACKTEST_NOTE = (
+    "⚠️ Beta engine — backtested BTC+ETH combined: 26.7% win rate / +0.08% avg return (n=15, 60 days — "
+    "a very thin sample). Informational only, not a buy/sell signal — you decide."
+)
+
+CRYPTO_1M_DIVERGENCE_BACKTEST_NOTE = (
+    "⚠️ UNVALIDATED — cannot be backtested at all (yfinance keeps only 7-8 days of 1-minute history, "
+    "nowhere near enough occurrences to trust a win rate). Pure live observation only, not a buy/sell "
+    "signal — you decide."
+)
+
+
+@st.fragment(run_every=300)
+def check_for_new_crypto_5m_divergence_signals():
+    """BTC-USD/ETH-USD only - see _check_crypto_short_tf_divergence_signals."""
+    _check_crypto_short_tf_divergence_signals(
+        "crypto_5m_divergence_states", "crypto_5m_divergence_states_seeded",
+        Crypto5mRSIDivergenceStatusService, Crypto5mRSIDivergenceStrategy, CRYPTO_5M_DIVERGENCE_BACKTEST_NOTE,
+        "5m Crypto Divergence (Beta)", icon_forming="🔵",
+    )
+
+
+@st.fragment(run_every=300)
+def check_for_new_crypto_15m_divergence_signals():
+    """BTC-USD/ETH-USD only - see _check_crypto_short_tf_divergence_signals."""
+    _check_crypto_short_tf_divergence_signals(
+        "crypto_15m_divergence_states", "crypto_15m_divergence_states_seeded",
+        Crypto15mRSIDivergenceStatusService, Crypto15mRSIDivergenceStrategy, CRYPTO_15M_DIVERGENCE_BACKTEST_NOTE,
+        "15m Crypto Divergence (Beta)", icon_forming="🟠",
+    )
+
+
+@st.fragment(run_every=300)
+def check_for_new_crypto_1m_divergence_signals():
+    """
+    BTC-USD/ETH-USD only, UNVALIDATED - see
+    _check_crypto_short_tf_divergence_signals. Explicit instruction to
+    ship despite knowing this can never be backtested (yfinance's 7-8
+    day 1m history hard limit) - every alert carries a stronger,
+    distinct "unvalidated, live-only" disclaimer, not just "beta".
+    """
+    _check_crypto_short_tf_divergence_signals(
+        "crypto_1m_divergence_states", "crypto_1m_divergence_states_seeded",
+        Crypto1mRSIDivergenceStatusService, Crypto1mRSIDivergenceStrategy, CRYPTO_1M_DIVERGENCE_BACKTEST_NOTE,
+        "1m Crypto Divergence (Unvalidated)", icon_forming="🟣",
     )
 
 
@@ -3232,6 +3319,15 @@ def render_universe_tab(prefix, country, title):
         check_for_new_india_weekly_stock_divergence_signals()
         check_for_new_india_daily_stock_divergence_signals()
 
+    if prefix == "crypto":
+        # BTC-USD/ETH-USD only, no universe scan behind these (see
+        # _check_crypto_short_tf_divergence_signals) - still run from
+        # here so they fire on every script pass, same reasoning as
+        # the US/India ones above.
+        check_for_new_crypto_5m_divergence_signals()
+        check_for_new_crypto_15m_divergence_signals()
+        check_for_new_crypto_1m_divergence_signals()
+
 
 # (label, session key, columns to scan for actionable rows -> keywords that mark that column's label as "act now")
 SESSION_KEY_TO_CACHE_PREFIX = {
@@ -4171,6 +4267,73 @@ def render_beta_tab():
         "beta_weekly_stock_divergence",
     )
 
+    st.divider()
+
+    _render_crypto_short_tf_divergence_beta_section()
+
+
+def _render_crypto_short_tf_divergence_beta_section():
+    """
+    BTC-USD/ETH-USD only, 1m/5m/15m - explicit request after a real ETH
+    1m chart example ("i see something in eth today... in two days
+    itself, i could have done wonder if i was capturing it"). No
+    universe scan behind this (only 2 symbols) - fetches directly on
+    every render_beta_tab fragment tick (60s), same as every other
+    section here.
+
+    Always shows all 6 rows (2 tickers x 3 timeframes), not filtered to
+    "non-Watching" like the other sections - there's no separate
+    per-timeframe table to browse elsewhere for these, so the plain
+    current state is the useful view here.
+    """
+
+    st.subheader("🧪 Beta — Crypto Divergence (BTC/ETH, 1m/5m/15m)")
+    st.caption(
+        "Same recalibrated divergence logic as the Wide/Stock variants above, applied to BTC-USD and ETH-USD on "
+        "ultra-short timeframes. 5m and 15m have real (if thin, 60-day-max) backtests below. 1m has NO backtest "
+        "at all - yfinance only ever keeps 7-8 days of 1-minute history, nowhere near enough to validate a win "
+        "rate, so it's live observation only. Alerts fire on both the divergence forming and the trend "
+        "confirming - never a buy/sell instruction."
+    )
+    st.warning(CRYPTO_5M_DIVERGENCE_BACKTEST_NOTE)
+    st.warning(CRYPTO_15M_DIVERGENCE_BACKTEST_NOTE)
+    st.warning(CRYPTO_1M_DIVERGENCE_BACKTEST_NOTE)
+
+    tickers = list(CRYPTO_SHORT_TF_NAMES)
+    rows = []
+
+    for label, status_service, strategy in [
+        ("1m", Crypto1mRSIDivergenceStatusService, Crypto1mRSIDivergenceStrategy),
+        ("5m", Crypto5mRSIDivergenceStatusService, Crypto5mRSIDivergenceStrategy),
+        ("15m", Crypto15mRSIDivergenceStatusService, Crypto15mRSIDivergenceStrategy),
+    ]:
+
+        states = status_service.screen_states(tickers)
+
+        for ticker in tickers:
+
+            info = states.get(ticker, {})
+            state = info.get("state", "NONE")
+
+            rows.append({
+                "Ticker": ticker,
+                "Name": CRYPTO_SHORT_TF_NAMES[ticker],
+                "Timeframe": label,
+                "State": strategy.STATE_LABELS.get(state, "⚪ Watching"),
+                "Price": info.get("price"),
+                "RSI": info.get("rsi"),
+                "Timestamp": _format_event_time(info.get("event_time")),
+            })
+
+    table_df = pd.DataFrame(rows)
+
+    st.dataframe(
+        table_df,
+        use_container_width=True,
+        hide_index=True,
+        key="beta_crypto_short_tf_divergence_table",
+    )
+
 
 def _render_divergence_reclaim_beta_section():
     """
@@ -4246,7 +4409,14 @@ def _render_stock_divergence_beta_section(column, title, backtest_note, caption,
         matched = df[mask].copy()
 
         if not matched.empty:
-            matched.insert(0, "Market", label)
+            # Real bug: .insert(0, "Market", ...) raised "already
+            # exists" on the second call to this function within the
+            # same render_beta_tab() pass (Daily then Weekly) - plain
+            # assignment is idempotent regardless of whether the
+            # column is already there, and Scanner.render's own
+            # `columns` list already controls display order anyway, so
+            # there's no need for "Market" to physically be first.
+            matched["Market"] = label
             frames.append(matched)
 
     if not frames:

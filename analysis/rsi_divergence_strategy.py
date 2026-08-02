@@ -378,6 +378,79 @@ class DailyRSIDivergenceStrategy(RSIDivergenceStrategy):
         return super().run_symbol(symbol, period=period, interval=interval)
 
 
+class WideRSIDivergenceStrategy(RSIDivergenceStrategy):
+    """
+    Same 1H macro scope as the live RSIDivergenceStrategy, loosened
+    base/second-leg thresholds - explicit real gaps found via live
+    examples: Silver's RSI only reached 69 during a genuine bearish
+    topping pattern (never touched the 75 base-touch threshold), and
+    BTC-USD's RSI touched 25.68 during a genuine bottoming move (just
+    missing the 25 threshold by a hair). Both real, meaningful moves
+    the strict 25/75 thresholds structurally can't see.
+
+    Loosened to 30/70 (base) and 35/65 (second-leg zone) - a smaller
+    move than StockRSIDivergenceStrategy's 40/60 (stocks swing RSI even
+    less than macro/FX/commodities on these timeframes; macro's own
+    thresholds shouldn't need to loosen as far). Kept the strict
+    equal-or-lower PRICE_TOLERANCE_PCT (0%, unchanged) - the real gap
+    found here was in the RSI zone, not the price shape.
+    """
+
+    OVERSOLD_TOUCH = 30
+    OVERBOUGHT_TOUCH = 70
+    SECOND_LEG_OVERSOLD = 35
+    SECOND_LEG_OVERBOUGHT = 65
+
+
+class DailyWideRSIDivergenceStrategy(WideRSIDivergenceStrategy):
+    """Daily-bar sibling of WideRSIDivergenceStrategy - same loosened macro thresholds, Daily bars."""
+
+    @classmethod
+    def run_symbol(cls, symbol, period="730d", interval="1d"):
+        return super().run_symbol(symbol, period=period, interval=interval)
+
+
+class Crypto5mRSIDivergenceStrategy(WideRSIDivergenceStrategy):
+    """
+    BETA - BTC-USD/ETH-USD only, explicit request after a real ETH 1m
+    chart example ("i see something in eth today... in two days itself,
+    i could have done wonder if i was capturing it"). Reuses
+    WideRSIDivergenceStrategy's thresholds as a starting point (crypto's
+    own RSI behavior on ultra-short timeframes hasn't been separately
+    calibrated yet - no reason to assume it's identical to 1H/Daily
+    macro, but no evidence yet that it's meaningfully different either).
+
+    period="60d" is yfinance's own hard limit for 5m bars, not a design
+    choice - requesting more just returns empty.
+    """
+
+    @classmethod
+    def run_symbol(cls, symbol, period="60d", interval="5m"):
+        return super().run_symbol(symbol, period=period, interval=interval)
+
+
+class Crypto15mRSIDivergenceStrategy(WideRSIDivergenceStrategy):
+    """BETA - BTC-USD/ETH-USD only, same as Crypto5mRSIDivergenceStrategy but 15m bars. 60d is yfinance's hard limit for this interval too."""
+
+    @classmethod
+    def run_symbol(cls, symbol, period="60d", interval="15m"):
+        return super().run_symbol(symbol, period=period, interval=interval)
+
+
+class Crypto1mRSIDivergenceStrategy(WideRSIDivergenceStrategy):
+    """
+    BETA, UNVALIDATED - BTC-USD/ETH-USD only. Explicit instruction to
+    ship this despite knowing it can never be backtested: yfinance only
+    ever keeps 7-8 days of 1m history, nowhere near enough occurrences
+    to trust a win rate. Live observation only - every alert this fires
+    must say so plainly, not just "beta" like the others.
+    """
+
+    @classmethod
+    def run_symbol(cls, symbol, period="7d", interval="1m"):
+        return super().run_symbol(symbol, period=period, interval=interval)
+
+
 class StockRSIDivergenceStrategy(RSIDivergenceStrategy):
     """
     Daily-bar variant, recalibrated specifically for individual stocks

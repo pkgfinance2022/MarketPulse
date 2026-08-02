@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import ta
 
-from analysis.rsi_divergence_strategy import DailyRSIDivergenceStrategy, RSIDivergenceStrategy, StockRSIDivergenceStrategy, WeeklyStockRSIDivergenceStrategy
+from analysis.rsi_divergence_strategy import Crypto1mRSIDivergenceStrategy, Crypto5mRSIDivergenceStrategy, Crypto15mRSIDivergenceStrategy, DailyRSIDivergenceStrategy, RSIDivergenceStrategy, StockRSIDivergenceStrategy, WeeklyStockRSIDivergenceStrategy
 
 ACTIONABLE_STATES = {
     "ENTRY_LONG_DIVERGENCE": "LONG",
@@ -31,9 +31,18 @@ class RSIDivergenceStatusService:
     SUPPORT_RESISTANCE_WINDOW = 20
 
     @classmethod
-    def analyse(cls, symbol, period="730d"):
+    def analyse(cls, symbol, period=None):
+        """
+        period=None (the default) lets cls.STRATEGY.run_symbol fall
+        back to ITS OWN default - real bug found: hardcoding "730d"
+        here unconditionally passed it through even to strategies whose
+        natural period is much shorter (Crypto5m/15m's 60d, Crypto1m's
+        7d - both yfinance hard limits), silently breaking every fetch
+        for those with a "no price data found" error.
+        """
 
-        trace, df = cls.STRATEGY.run_symbol(symbol, period=period)
+        kwargs = {"period": period} if period else {}
+        trace, df = cls.STRATEGY.run_symbol(symbol, **kwargs)
 
         if trace is None:
             return None
@@ -129,7 +138,8 @@ class RSIDivergenceStatusService:
     def _screen_one(cls, symbol, period):
 
         try:
-            trace, _ = cls.STRATEGY.run_symbol(symbol, period=period)
+            kwargs = {"period": period} if period else {}
+            trace, _ = cls.STRATEGY.run_symbol(symbol, **kwargs)
 
             if trace:
                 description, state, event_time = cls.STRATEGY.describe(trace)
@@ -148,7 +158,7 @@ class RSIDivergenceStatusService:
             return symbol, {"state": "NONE", "description": "", "price": None, "rsi": None, "event_time": None}
 
     @classmethod
-    def screen_states(cls, symbols, period="730d"):
+    def screen_states(cls, symbols, period=None):
 
         states = {}
 
@@ -163,7 +173,7 @@ class RSIDivergenceStatusService:
         return states
 
     @classmethod
-    def screen(cls, symbols, period="730d"):
+    def screen(cls, symbols, period=None):
 
         states = cls.screen_states(symbols, period=period)
 
@@ -198,3 +208,21 @@ class StockRSIDivergenceStatusService(RSIDivergenceStatusService):
     """
 
     STRATEGY = StockRSIDivergenceStrategy
+
+
+class Crypto5mRSIDivergenceStatusService(RSIDivergenceStatusService):
+    """BETA, crypto only - see Crypto5mRSIDivergenceStrategy."""
+
+    STRATEGY = Crypto5mRSIDivergenceStrategy
+
+
+class Crypto15mRSIDivergenceStatusService(RSIDivergenceStatusService):
+    """BETA, crypto only - see Crypto15mRSIDivergenceStrategy."""
+
+    STRATEGY = Crypto15mRSIDivergenceStrategy
+
+
+class Crypto1mRSIDivergenceStatusService(RSIDivergenceStatusService):
+    """BETA, UNVALIDATED, crypto only - see Crypto1mRSIDivergenceStrategy. Can never be backtested (yfinance keeps only 7-8 days of 1m data)."""
+
+    STRATEGY = Crypto1mRSIDivergenceStrategy

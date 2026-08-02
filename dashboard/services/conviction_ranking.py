@@ -79,6 +79,26 @@ WIN_RATE_LOOKUP = {
     # below. Still shown as beta (brand new, backtested only, not yet
     # observed live) rather than folded into Highest Conviction.
     "Daily Stock Divergence": {"win_rate": 59.1, "avg_return": 0.43, "n": 683},
+    # BETA - macro thresholds loosened from 25/75 to 30/70 (base) and
+    # 30/60 to 35/65 (second leg) after real misses (Silver's RSI
+    # topped at 69, BTC-USD's bottomed at 25.68 - both just missed the
+    # strict thresholds). 1H: more trades than strict (194 vs 116) but
+    # avg return roughly flat (+0.02% vs +0.14%) - a wash, not a clear
+    # win. Daily stays thin and negative even loosened (n=13, -3.0%).
+    # Not swapped in for the live strict engine - shown here as its own
+    # separate beta comparison point.
+    "Wide RSI Divergence": {"win_rate": 43.8, "avg_return": 0.02, "n": 194},
+    "Daily Wide RSI Divergence": {"win_rate": 8.3, "avg_return": -3.0, "n": 13},
+    # BETA - BTC-USD/ETH-USD only, ultra-short timeframes (explicit
+    # request after a real ETH 1m divergence example). Both backtests
+    # are honest but genuinely thin - yfinance only keeps 60 days of
+    # history at these intervals, nowhere near the 365-day/5-year
+    # windows used elsewhere this session.
+    "5m Crypto Divergence": {"win_rate": 46.7, "avg_return": 0.09, "n": 45},
+    "15m Crypto Divergence": {"win_rate": 26.7, "avg_return": 0.08, "n": 15},
+    # 1m has NO entry here deliberately - it cannot be backtested at
+    # all (yfinance keeps only 7-8 days of 1-minute history), so there
+    # is no honest number to report. Live observation only.
 }
 
 
