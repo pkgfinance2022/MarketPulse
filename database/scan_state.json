@@ -169,7 +169,7 @@
   "GBPUSD=X:ema_reclaim": "WATCHING",
   "GBPUSD=X:reversal_1h": "WATCHING",
   "GBPUSD=X:wave": "ALERT_SHORT",
-  "GC=F:daily_ema_reclaim": "PULLBACK",
+  "GC=F:daily_ema_reclaim": "ENTRY_LONG",
   "GC=F:ema_reclaim": "PULLBACK",
   "GC=F:reversal_1h": "WATCHING",
   "GC=F:wave": "WATCHING",
