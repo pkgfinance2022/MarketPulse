@@ -382,7 +382,7 @@ def check_for_new_entries():
         # parentheses for cross-referencing elsewhere - no repeated
         # "MarketPulse" branding, no raw internal state code.
         description = full_status["description"] if full_status else ""
-        message = f"{icon} {entry['name']} ({entry['ticker']}) — {entry['direction']} entry\n{event_time}\nPrice {price} · RSI {rsi}{levels}\n{description}"
+        message = f"{icon} {entry['name']} ({entry['ticker']}) — {entry['direction']} entry (RSI Wave · Hourly)\n{event_time}\nPrice {price} · RSI {rsi}{levels}\n{description}"
 
         st.toast(f"{entry['direction']} entry: {entry['name']}", icon=icon)
 
@@ -508,7 +508,7 @@ def check_for_new_reversal_signals():
 
         description = full_status["description"] if full_status else ""
         message = (
-            f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (Reversal Playbook)\n"
+            f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (Reversal Playbook · Hourly)\n"
             f"{event_time}\nPrice {price} · RSI {signal['rsi']}{levels}\n{description}"
         )
 
@@ -602,7 +602,7 @@ def check_for_new_divergence_signals():
 
         description = full_status["description"] if full_status else ""
         message = (
-            f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (RSI Divergence)\n"
+            f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (RSI Divergence · Hourly)\n"
             f"{event_time}\nPrice {price} · RSI {signal['rsi']}{levels}\n{description}"
         )
 
@@ -697,7 +697,7 @@ def check_for_new_pattern_signals():
 
         description = full_status["description"] if full_status else ""
         message = (
-            f"🟢 {signal['name']} ({signal['ticker']}) — {signal_label}\n"
+            f"🟢 {signal['name']} ({signal['ticker']}) — {signal_label} (Chart Patterns · Daily)\n"
             f"{event_time}\nPrice {price}{levels}\n{description}"
         )
 
@@ -792,7 +792,7 @@ def check_for_new_ema_reclaim_signals():
 
         description = full_status["description"] if full_status else ""
         message = (
-            f"🟢 {signal['name']} ({signal['ticker']}) — {signal_label}\n"
+            f"🟢 {signal['name']} ({signal['ticker']}) — {signal_label} (EMA Reclaim · Hourly)\n"
             f"{event_time}\nPrice {price}{levels}\n{description}"
         )
 
@@ -877,7 +877,7 @@ def check_for_new_daily_ema_reclaim_signals():
 
         description = full_status["description"] if full_status else ""
         message = (
-            f"🟢 {signal['name']} ({signal['ticker']}) — {signal_label} (Daily)\n"
+            f"🟢 {signal['name']} ({signal['ticker']}) — {signal_label} (EMA Reclaim · Daily)\n"
             f"{event_time}\nPrice {price}{levels}\n{description}"
         )
 
@@ -2767,7 +2767,7 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
             if TelegramNotifier.is_configured():
                 description = full_status["description"] if full_status else ""
                 TelegramNotifier.send(
-                    f"{icon} {entry['name']} ({entry['ticker']}) — {entry['direction']} entry (RSI Wave)\n"
+                    f"{icon} {entry['name']} ({entry['ticker']}) — {entry['direction']} entry (RSI Wave · Hourly)\n"
                     f"{event_time}\nPrice {price} · RSI {rsi}{levels}\n{description}"
                 )
 
@@ -2823,7 +2823,7 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
             if TelegramNotifier.is_configured():
                 description = full_status["description"] if full_status else ""
                 TelegramNotifier.send(
-                    f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (Reversal Playbook)\n"
+                    f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (Reversal Playbook · Hourly)\n"
                     f"{event_time}\nPrice {price} · RSI {rsi}{levels}\n{description}"
                 )
 
@@ -2880,7 +2880,7 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
         if prefix == "crypto" and TelegramNotifier.is_configured():
             description = full_status["description"] if full_status else ""
             TelegramNotifier.send(
-                f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (Daily)\n"
+                f"{icon} {signal['name']} ({signal['ticker']}) — {signal_label} (Reversal Playbook · Daily)\n"
                 f"{event_time}\nPrice {price} · RSI {rsi}{levels}\n{description}"
             )
 
@@ -2924,7 +2924,7 @@ def _notify_universe_changes(prefix, name_map, wave_states, reversal_states, dai
         # Telegram push is Crypto-only - see _notify_universe_changes's docstring.
         if prefix == "crypto" and TelegramNotifier.is_configured():
             TelegramNotifier.send(
-                f"🟢 {signal['name']} ({signal['ticker']}) — {signal_label} (Weekly)\n"
+                f"🟢 {signal['name']} ({signal['ticker']}) — {signal_label} (Weekly Confluence)\n"
                 f"{event_time}\nPrice {price} · RSI {rsi}\n{signal['description']}"
             )
 
