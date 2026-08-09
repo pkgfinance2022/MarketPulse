@@ -130,7 +130,19 @@ def _ism_rows(start, end):
 
         period += 1
 
-    return pd.DataFrame(rows, columns=["Date", "Event", "Importance", "Notes"])
+    # Real bug: pd.DataFrame(rows, columns=[...]) with an empty `rows`
+    # list (no ISM date falls in this particular window - happens for
+    # a real stretch of days most months, right after that month's own
+    # 3rd business day has already passed) defaults every column,
+    # including "Date", to object dtype instead of datetime64. That
+    # empty object-dtype "Date" column then poisons the whole combined
+    # calendar's dtype once concatenated with the real datetime rows
+    # in upcoming() below, breaking the later .dt.strftime() call.
+    # Explicit cast makes this correct even when rows is empty.
+    df = pd.DataFrame(rows, columns=["Date", "Event", "Importance", "Notes"])
+    df["Date"] = pd.to_datetime(df["Date"])
+
+    return df
 
 
 def upcoming(days=14, reference_date=None):
@@ -153,6 +165,13 @@ def upcoming(days=14, reference_date=None):
         frames.append(df[(df["Date"] >= today) & (df["Date"] <= cutoff)])
 
     combined = pd.concat(frames, ignore_index=True)
+
+    # Belt-and-suspenders, same reasoning as _ism_rows' own fix above -
+    # concatenating an empty object-dtype "Date" column (from any
+    # future frame source, not just ISM) with real datetime64 rows
+    # silently produces an object-dtype result, breaking every caller
+    # that expects to call .dt on this column.
+    combined["Date"] = pd.to_datetime(combined["Date"])
 
     return combined.sort_values("Date")
 
