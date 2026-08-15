@@ -71,7 +71,7 @@
   "BSE.NS:weekly": "WATCHING",
   "BTC-USD:daily": "BUY_ALERT",
   "BTC-USD:daily_ema_reclaim": "PULLBACK",
-  "BTC-USD:ema_reclaim": "WATCHING",
+  "BTC-USD:ema_reclaim": "PULLBACK",
   "BTC-USD:reversal_1h": "WATCHING",
   "BTC-USD:wave": "WATCHING",
   "BTC-USD:weekly": "WATCHING",
