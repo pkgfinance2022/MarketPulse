@@ -370,7 +370,7 @@
   "SCI.NS:daily": "WATCHING",
   "SCI.NS:weekly": "WATCHING",
   "SI=F:daily_ema_reclaim": "WATCHING",
-  "SI=F:ema_reclaim": "PULLBACK",
+  "SI=F:ema_reclaim": "RECLAIM_ALERT",
   "SI=F:reversal_1h": "WATCHING",
   "SI=F:wave": "ALERT_SHORT",
   "SIEMENS.NS:daily": "WATCHING",
