@@ -145,7 +145,7 @@
   "EMR:weekly": "WATCHING",
   "ETERNAL.NS:daily": "WATCHING",
   "ETERNAL.NS:weekly": "WATCHING",
-  "ETH-USD:daily_ema_reclaim": "RECLAIM_ALERT",
+  "ETH-USD:daily_ema_reclaim": "PULLBACK",
   "ETH-USD:ema_reclaim": "WATCHING",
   "ETH-USD:reversal_1h": "WATCHING",
   "ETH-USD:wave": "WATCHING",
