@@ -94,7 +94,7 @@
   "CIPLA.NS:daily": "WATCHING",
   "CIPLA.NS:weekly": "WATCHING",
   "CL=F:daily_ema_reclaim": "WATCHING",
-  "CL=F:ema_reclaim": "WATCHING",
+  "CL=F:ema_reclaim": "PULLBACK",
   "CL=F:reversal_1h": "WATCHING",
   "CL=F:wave": "ALERT_SHORT",
   "CLEAN.NS:daily": "WATCHING",
