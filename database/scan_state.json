@@ -428,7 +428,7 @@
   "USDCAD=X:reversal_1h": "WATCHING",
   "USDCAD=X:wave": "ALERT_LONG",
   "USDCHF=X:daily_ema_reclaim": "PULLBACK",
-  "USDCHF=X:ema_reclaim": "WATCHING",
+  "USDCHF=X:ema_reclaim": "RECLAIM_ALERT",
   "USDCHF=X:reversal_1h": "BUY_ALERT",
   "USDCHF=X:wave": "ALERT_LONG",
   "V:daily": "WATCHING",
