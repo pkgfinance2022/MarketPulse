@@ -455,7 +455,7 @@
   "XOM:weekly": "WATCHING",
   "ZENTEC.NS:daily": "WATCHING",
   "ZENTEC.NS:weekly": "WATCHING",
-  "^AEX:daily_ema_reclaim": "RECLAIM_ALERT",
+  "^AEX:daily_ema_reclaim": "PULLBACK",
   "^AEX:ema_reclaim": "WATCHING",
   "^AEX:reversal_1h": "WATCHING",
   "^AEX:wave": "WATCHING",
