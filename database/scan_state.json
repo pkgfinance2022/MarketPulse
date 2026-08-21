@@ -504,7 +504,7 @@
   "^NSEI:reversal_1h": "WATCHING",
   "^NSEI:wave": "WAVE_SHORT",
   "^RUT:daily_ema_reclaim": "RECLAIM_ALERT",
-  "^RUT:ema_reclaim": "PULLBACK",
+  "^RUT:ema_reclaim": "WATCHING",
   "^RUT:reversal_1h": "WATCHING",
   "^RUT:wave": "WATCHING",
   "^STI:daily_ema_reclaim": "WATCHING",
