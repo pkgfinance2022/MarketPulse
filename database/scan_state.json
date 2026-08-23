@@ -17,7 +17,7 @@
   "ADANIPOWER.NS:weekly": "WATCHING",
   "AHLUCONT.NS:daily": "WATCHING",
   "AHLUCONT.NS:weekly": "WATCHING",
-  "ALI=F:daily_ema_reclaim": "PULLBACK",
+  "ALI=F:daily_ema_reclaim": "RECLAIM_ALERT",
   "ALI=F:ema_reclaim": "WATCHING",
   "ALI=F:reversal_1h": "WATCHING",
   "ALI=F:wave": "WATCHING",
