@@ -492,7 +492,7 @@
   "^N225:reversal_1h": "WATCHING",
   "^N225:wave": "WATCHING",
   "^NDX:daily_ema_reclaim": "PULLBACK",
-  "^NDX:ema_reclaim": "ENTRY_LONG",
+  "^NDX:ema_reclaim": "PULLBACK",
   "^NDX:reversal_1h": "WATCHING",
   "^NDX:wave": "WATCHING",
   "^NSEBANK:daily_ema_reclaim": "PULLBACK",
