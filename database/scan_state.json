@@ -423,7 +423,7 @@
   "TSM:weekly": "WATCHING",
   "UNP:daily": "WATCHING",
   "UNP:weekly": "WATCHING",
-  "USDCAD=X:daily_ema_reclaim": "PULLBACK",
+  "USDCAD=X:daily_ema_reclaim": "RECLAIM_ALERT",
   "USDCAD=X:ema_reclaim": "WATCHING",
   "USDCAD=X:reversal_1h": "WATCHING",
   "USDCAD=X:wave": "WATCHING",
