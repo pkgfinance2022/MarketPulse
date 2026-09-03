@@ -467,7 +467,7 @@
   "^FCHI:ema_reclaim": "RECLAIM_ALERT",
   "^FCHI:reversal_1h": "WATCHING",
   "^FCHI:wave": "ALERT_LONG",
-  "^FTSE:daily_ema_reclaim": "RECLAIM_ALERT",
+  "^FTSE:daily_ema_reclaim": "PULLBACK",
   "^FTSE:ema_reclaim": "WATCHING",
   "^FTSE:reversal_1h": "WATCHING",
   "^FTSE:wave": "WATCHING",
