@@ -18,7 +18,7 @@
   "AHLUCONT.NS:daily": "WATCHING",
   "AHLUCONT.NS:weekly": "WATCHING",
   "ALI=F:daily_ema_reclaim": "WATCHING",
-  "ALI=F:ema_reclaim": "PULLBACK",
+  "ALI=F:ema_reclaim": "RECLAIM_ALERT",
   "ALI=F:reversal_1h": "WATCHING",
   "ALI=F:wave": "WATCHING",
   "AMBER.NS:daily": "WATCHING",
