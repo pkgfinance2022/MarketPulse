@@ -132,7 +132,7 @@
   "DREDGECORP.NS:daily": "WATCHING",
   "DREDGECORP.NS:weekly": "WATCHING",
   "DX-Y.NYB:daily_ema_reclaim": "WATCHING",
-  "DX-Y.NYB:ema_reclaim": "RECLAIM_ALERT",
+  "DX-Y.NYB:ema_reclaim": "PULLBACK",
   "DX-Y.NYB:reversal_1h": "WATCHING",
   "DX-Y.NYB:wave": "ALERT_SHORT",
   "EA:daily": "WATCHING",
